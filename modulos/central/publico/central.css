@@ -416,6 +416,13 @@
 .ch-cel-abas {
   margin: 0;
 }
+.segmentado.ch-cel-abas {
+  --n: 3;
+}
+.segmentado.ch-cel-abas button {
+  padding: 0 4px;
+  font-size: 14px;
+}
 .ch-cel-painel {
   display: flex;
   flex-direction: column;

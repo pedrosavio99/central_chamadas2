@@ -14,8 +14,8 @@ Navegador (JsSIP, WebSocket + WebRTC) <-> Asterisk <-> UDP na rede local <-> Cel
 - **Sem tom de chamada.** O app do celular não repassa o som de "chamando" (sem early media). A tela mostra
   "Chamando..." e o áudio só começa quando o outro lado atende.
 - **O celular precisa estar ligado, na mesma rede Wi-Fi do PC e com a Depuração sem fio ligada.** O app se
-  pareia uma vez (você digita um código de 6 dígitos numa notificação) e depois se reconecta sozinho, também
-  depois de reiniciar o celular. Não há Shizuku.
+  pareia uma vez (você escaneia dois QR codes que a Central mostra, sem digitar nada) e depois se reconecta
+  sozinho, também depois de reiniciar o celular. Não há Shizuku.
 - **Enquanto "Take over calls" estiver ligado no app, as ligações recebidas no chip tocam no navegador e não
   no celular.**
 - **Sem login.** O servidor escuta em `0.0.0.0` (contrato do `AGENTS.md`). Quem alcança a porta 3333 pela rede

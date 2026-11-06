@@ -12,10 +12,10 @@ index 4b17c6e..88c1495 100644
      implementation(libs.androidx.core.ktx)
      implementation(libs.androidx.activity.compose)
 diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
-index 11607c7..ee7ba3d 100644
+index 11607c7..b69f3a2 100644
 --- a/app/src/main/AndroidManifest.xml
 +++ b/app/src/main/AndroidManifest.xml
-@@ -1,5 +1,6 @@
+@@ -1,9 +1,11 @@
  <?xml version="1.0" encoding="utf-8"?>
 -<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 +<manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -23,7 +23,12 @@ index 11607c7..ee7ba3d 100644
  
      <uses-permission android:name="android.permission.INTERNET" />
      <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-@@ -11,6 +12,8 @@
+     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
++    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+     <uses-permission android:name="android.permission.READ_PHONE_NUMBERS" />
+     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+@@ -11,6 +13,8 @@
      <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
      <uses-permission android:name="android.permission.WAKE_LOCK" />
      <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
@@ -32,7 +37,7 @@ index 11607c7..ee7ba3d 100644
  
      <application
          android:name=".GatewayApp"
-@@ -79,17 +82,10 @@
+@@ -79,17 +83,10 @@
              android:exported="true"
              android:permission="android.permission.DUMP" />
  
@@ -128,7 +133,7 @@ index aa28360..949396c 100644
                          }
                          OutlinedButton(onClick = ::chooseDialerInSettings, enabled = !health.dialerChangeRunning) { Text("Choose dialer in Settings") }
 diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayRuntime.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayRuntime.kt
-index e29e205..c3bf9ff 100644
+index e29e205..e426596 100644
 --- a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayRuntime.kt
 +++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayRuntime.kt
 @@ -21,7 +21,7 @@ import io.github.sparkcyf.voicesipagent.privileged.AudioMethod
@@ -311,7 +316,7 @@ index e29e205..c3bf9ff 100644
 +    private fun shellHelperProblem(state: HelperConnector.State) = when (state) {
 +        HelperConnector.State.NOT_RUNNING -> "Helper not connected. Turn on Wireless debugging; the app reconnects by itself"
 +        HelperConnector.State.PAIRING_REQUIRED, HelperConnector.State.PAIRING_FAILED ->
-+            "Pairing needed. Open the app and tap Pair this phone"
++            "Pairing needed. Open the app and follow First setup"
 +        else -> "Helper not connected"
 +    }
  
@@ -383,7 +388,7 @@ index e29e205..c3bf9ff 100644
  
          internal fun newWorker() = ScheduledThreadPoolExecutor(1) { task ->
 diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayService.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayService.kt
-index af88f2b..315e6f8 100644
+index af88f2b..9f8a272 100644
 --- a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayService.kt
 +++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayService.kt
 @@ -14,7 +14,7 @@ import android.os.IBinder
@@ -406,13 +411,13 @@ index af88f2b..315e6f8 100644
 +            // The helper is started over Wireless debugging. Opening the activity retries at once.
 +            h.shellHelper == HelperConnector.State.NOT_RUNNING -> "Helper not connected. Turn on Wireless debugging and tap here to reconnect."
 +            h.shellHelper == HelperConnector.State.PAIRING_REQUIRED || h.shellHelper == HelperConnector.State.PAIRING_FAILED ->
-+                "Pairing needed. Tap here, then Pair this phone."
++                "Pairing needed. Tap here and follow First setup."
 +            !h.privilegedReady -> "Setup needed · helper ${h.shellHelper.name.lowercase()}"
              !h.sip.ready -> "SIP: ${h.sip.detail}"
              else -> "Ready · ${h.sip.detail}"
          }
 diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/MainActivity.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/MainActivity.kt
-index c6ff2e3..1804533 100644
+index c6ff2e3..400cf4e 100644
 --- a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/MainActivity.kt
 +++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/MainActivity.kt
 @@ -65,13 +65,19 @@ import io.github.sparkcyf.voicesipagent.privileged.HealthKeys
@@ -436,7 +441,7 @@ index c6ff2e3..1804533 100644
      override fun onCreate(savedInstanceState: Bundle?) {
          super.onCreate(savedInstanceState)
          val runtime = GatewayRuntime.get(this)
-@@ -102,6 +108,16 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
+@@ -102,6 +108,17 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
      ) {
          Text("Voice SIP Agent", style = MaterialTheme.typography.headlineSmall)
          val cur by rt.settingsFlow.collectAsState()
@@ -446,14 +451,15 @@ index c6ff2e3..1804533 100644
 +        } else !rt.shellHelper.canRestart()
 +        if (needsPairing) {
 +            Section("First setup: pair this phone") {
-+                if (!h.takeover) Text("Turn on Take over calls below after pairing.", style = MaterialTheme.typography.bodySmall)
 +                PairingGuide(rt, h.shellHelper == HelperConnector.State.PAIRING_FAILED, h.shellHelperDetail, !h.dialerChangeRunning)
 +            }
++            // The scan button lives in this card, so keep it right under the instructions.
++            ConfigFileSection(rt)
 +        }
          Section("Takeover") {
              Toggle("Take over calls", cur.takeover, setTakeover) {
                  when {
-@@ -137,7 +153,7 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
+@@ -137,7 +154,7 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
              }
              if (roleMessage.isNotEmpty()) Text(roleMessage)
              if (h.holdsDialer || h.dialerChangeFailed) {
@@ -462,7 +468,7 @@ index c6ff2e3..1804533 100644
                      OutlinedButton(onClick = switchDialer, enabled = !h.dialerChangeRunning) { Text("Restore previous dialer") }
                  }
                  OutlinedButton(onClick = chooseDialer, enabled = !h.dialerChangeRunning) { Text("Choose dialer in Settings") }
-@@ -167,8 +183,8 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
+@@ -167,8 +184,8 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
                  h.takeoverOnPending -> "Health checks will start after current calls end."
                  else -> "Health checks are paused while takeover is off."
              }, style = MaterialTheme.typography.bodySmall)
@@ -473,7 +479,7 @@ index c6ff2e3..1804533 100644
              Check("Call audio access", h.audioReady)
              Check("Doze allowlisted", p?.get(HealthKeys.DOZE_ALLOWLISTED) == true)
              Check("SIP registration", h.sip.ready,
-@@ -180,11 +196,11 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
+@@ -180,11 +197,11 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
                  horizontalArrangement = Arrangement.spacedBy(8.dp),
                  verticalArrangement = Arrangement.spacedBy(8.dp),
              ) {
@@ -488,7 +494,7 @@ index c6ff2e3..1804533 100644
                  OutlinedButton(onClick = { rt.restartSip() },
                      enabled = actionsEnabled && cur.sipConfigured) { Text("Reconnect SIP") }
              }
-@@ -214,7 +230,7 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
+@@ -214,7 +231,7 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
              if (callAudio.restorationPending) {
                  Text("Local call playback restoration is unconfirmed. Sound may remain muted.",
                      color = MaterialTheme.colorScheme.error)
@@ -497,12 +503,55 @@ index c6ff2e3..1804533 100644
                      OutlinedButton(onClick = { rt.retryAudioRestoration() },
                          enabled = !callAudio.active && h.calls.count == 0 && h.session == null) {
                          Text("Retry restoring playback")
+@@ -233,7 +250,7 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
+             }
+         }
+         SettingsSection(rt, editor)
+-        ConfigFileSection(rt)
++        if (!needsPairing) ConfigFileSection(rt)
+         var advanced by rememberSaveable { mutableStateOf(false) }
+         OutlinedButton(onClick = { advanced = !advanced }) { Text(if (advanced) "Hide advanced settings" else "Advanced settings") }
+         if (advanced) {
+@@ -427,10 +444,31 @@ private fun ConfigFileSection(rt: GatewayRuntime) {
+             OutlinedButton(onClick = {
+                 scanner.startScan()
+                     .addOnSuccessListener { code ->
+-                        runCatching { ConfigFile.parse(code.rawValue.orEmpty()) }.fold({ import ->
++                        val scanned = QrPairing.read(code.rawValue.orEmpty())
++                        // The QR may also carry the Wireless-debugging pairing secret: start listening for it.
++                        val armed = scanned.offer?.let { offer ->
++                            rt.shellHelper.armQrPairing(offer.name, offer.password) { ok, text ->
++                                PairingNotifier.status(context, if (ok) "Phone paired" else "Pairing failed", text)
++                            }
++                            true
++                        } ?: false
++                        val armedNote = "Now open Settings, Developer options, Wireless debugging, Pair device with QR code, " +
++                            "and scan the second QR on the Central. The app pairs by itself."
++                        val config = scanned.config
++                        if (config == null) {
++                            message = if (armed) armedNote else "QR code not accepted"
++                            return@addOnSuccessListener
++                        }
++                        runCatching { ConfigFile.parse(config) }.fold({ import ->
+                             val current = rt.savedSettings()
+                             val changes = ConfigFile.changes(current, import.applyTo(current))
+-                            if (changes.isEmpty()) message = "The QR code matches the current settings." else preview = import to changes
++                            if (changes.isEmpty()) {
++                                message = (if (armed) "$armedNote " else "") + "The QR code matches the current settings."
++                            } else {
++                                preview = import to changes
++                                if (armed) message = armedNote
++                            }
++                            Unit
+                         }, { message = "QR code not accepted: ${it.message ?: it.javaClass.simpleName}" })
+                     }
+                     .addOnFailureListener { message = "Scan failed: ${it.message ?: it.javaClass.simpleName}" }
 diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/PairingGuide.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/PairingGuide.kt
 new file mode 100644
-index 0000000..e391420
+index 0000000..0e1b5d2
 --- /dev/null
 +++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/PairingGuide.kt
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,111 @@
 +package io.github.sparkcyf.voicesipagent.app
 +
 +import android.content.Intent
@@ -519,6 +568,7 @@ index 0000000..e391420
 +import androidx.compose.material3.OutlinedButton
 +import androidx.compose.material3.OutlinedTextField
 +import androidx.compose.material3.Text
++import androidx.compose.material3.TextButton
 +import androidx.compose.runtime.Composable
 +import androidx.compose.runtime.getValue
 +import androidx.compose.runtime.mutableStateOf
@@ -531,66 +581,86 @@ index 0000000..e391420
 +
 +/**
 + * One-time pairing of this phone with its own Wireless debugging, shown up front (not buried in an
-+ * error) whenever the helper cannot start yet. After it, the helper starts by itself on every boot.
++ * error) whenever the helper cannot start yet. The normal way needs no typing: scan the Central's
++ * configuration QR here, then scan its pairing QR in Settings. Typing the 6-digit code stays as a
++ * fallback. After pairing, the helper starts by itself on every boot.
 + */
 +@Composable
 +internal fun PairingGuide(rt: GatewayRuntime, failed: Boolean, detail: String, enabled: Boolean) {
 +    val ctx = LocalContext.current
++    var manual by rememberSaveable { mutableStateOf(false) }
 +    var typed by rememberSaveable { mutableStateOf("") }
 +    var note by remember { mutableStateOf("") }
 +
-+    fun startPairing() {
-+        rt.shellHelper.beginPairing()
-+        PairingNotifier.askForCode(ctx, "In Wireless debugging, tap Pair device with pairing code, then type the 6 digits here.")
++    fun openDeveloperOptions() {
 +        val opened = runCatching {
 +            ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 +        }.isSuccess
-+        note = if (opened) "" else "Could not open Developer options. Open Settings, System, Developer options by hand."
++        note = if (opened) "" else "Could not open Developer options. Open Settings, then Developer options, by hand."
 +    }
 +
-+    // Without this permission the code prompt would never show up on Android 13 and newer.
-+    val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { startPairing() }
++    fun startManualPairing() {
++        rt.shellHelper.beginPairing()
++        PairingNotifier.askForCode(ctx, "In Wireless debugging, tap Pair device with pairing code, then type the 6 digits here.")
++        openDeveloperOptions()
++    }
++
++    // Only the typed-code fallback needs this: its prompt is a notification.
++    val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { startManualPairing() }
 +
 +    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-+        Text("Pair this phone (one time)", style = MaterialTheme.typography.titleSmall)
 +        Text(
 +            "This app needs one extra permission that Android only gives through Wireless debugging. " +
-+                "You do this once; after that the app reconnects by itself, even after a reboot.",
++                "You do this once, with nothing to type. After that the app reconnects by itself, even after a reboot.",
 +            style = MaterialTheme.typography.bodySmall,
 +        )
 +        Text(
-+            "1. Connect this phone to Wi-Fi.\n" +
-+                "2. Settings, About phone, tap Build number 7 times (skip if Developer options already exists).\n" +
-+                "3. Developer options, turn on Wireless debugging.\n" +
-+                "4. Tap Pair this phone below. Settings opens: tap Pair device with pairing code.\n" +
-+                "5. Pull down the notification and type the 6 digits in it.",
++            "1. Connect this phone to Wi-Fi and turn on Developer options (Settings, About phone, tap Build number 7 times).\n" +
++                "2. Developer options, turn on Wireless debugging.\n" +
++                "3. On the PC open the Central, tap the phone icon, tab 2. Below, tap Scan QR code and scan it.\n" +
++                "4. On this phone: Wireless debugging, Pair device with QR code. Scan the QR on tab 3 of the Central.\n" +
++                "5. Done. The app pairs by itself and says so in a notification. Turn on Take over calls: a few seconds later Privileged helper turns green.",
 +            style = MaterialTheme.typography.bodySmall,
 +        )
-+        if (failed && detail.isNotBlank()) Text(detail, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
++        if (detail.isNotBlank()) {
++            Text(
++                detail,
++                color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
++                style = MaterialTheme.typography.bodySmall,
++            )
++        }
 +        if (note.isNotEmpty()) Text(note, style = MaterialTheme.typography.bodySmall)
-+        Button(
-+            onClick = {
-+                val granted = Build.VERSION.SDK_INT < 33 ||
-+                    ctx.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-+                if (granted) startPairing() else askNotifications.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-+            },
-+            enabled = enabled,
-+        ) { Text("Pair this phone") }
-+        // Fallback for split-screen or when notifications are blocked: "123456", or "PORT 123456".
-+        OutlinedTextField(
-+            value = typed,
-+            onValueChange = { typed = it.take(16) },
-+            label = { Text("Code here (or: port code)") },
-+            singleLine = true,
-+            modifier = Modifier.fillMaxWidth(),
-+        )
-+        OutlinedButton(
-+            onClick = {
-+                note = "Pairing..."
-+                rt.shellHelper.submitPairingCode(typed) { ok, message -> note = message; if (ok) typed = "" }
-+            },
-+            enabled = enabled && typed.isNotBlank(),
-+        ) { Text("Pair with this code") }
++        Button(onClick = { openDeveloperOptions() }, enabled = enabled) { Text("Open Developer options") }
++        TextButton(onClick = { manual = !manual }) { Text(if (manual) "Hide the typed-code option" else "QR not working? Pair with the 6-digit code") }
++        if (manual) {
++            Text(
++                "Tap Pair with a code. In Wireless debugging tap Pair device with pairing code and keep that window open. " +
++                    "Pull down the notification and type the 6 digits (or: port code, for example 37123 123456).",
++                style = MaterialTheme.typography.bodySmall,
++            )
++            Button(
++                onClick = {
++                    val granted = Build.VERSION.SDK_INT < 33 ||
++                        ctx.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
++                    if (granted) startManualPairing() else askNotifications.launch(android.Manifest.permission.POST_NOTIFICATIONS)
++                },
++                enabled = enabled,
++            ) { Text("Pair with a code") }
++            OutlinedTextField(
++                value = typed,
++                onValueChange = { typed = it.take(16) },
++                label = { Text("Code here (or: port code)") },
++                singleLine = true,
++                modifier = Modifier.fillMaxWidth(),
++            )
++            OutlinedButton(
++                onClick = {
++                    note = "Pairing..."
++                    rt.shellHelper.submitPairingCode(typed) { ok, message -> note = message; if (ok) typed = "" }
++                },
++                enabled = enabled && typed.isNotBlank(),
++            ) { Text("Pair with this code") }
++        }
 +    }
 +}
 diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/PairingNotifier.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/PairingNotifier.kt
@@ -763,6 +833,54 @@ index d17981e..32a4b04 100644
          val pcm = format()
          val selectedMethod = method()
          val suppressLocal = muteEarpiece()
+diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/QrPairing.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/QrPairing.kt
+new file mode 100644
+index 0000000..e51da42
+--- /dev/null
++++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/QrPairing.kt
+@@ -0,0 +1,42 @@
++package io.github.sparkcyf.voicesipagent.app
++
++import org.json.JSONObject
++
++/**
++ * What a scanned QR can carry for Wireless-debugging pairing, so nobody has to type the 6-digit code:
++ *  - the Central's configuration QR, which has an extra "adbPairing": {"name", "password"} object that
++ *    [ConfigFile] does not know (it is split off before the file is parsed);
++ *  - the Android pairing QR itself, "WIFI:T:ADB;S:name;P:password;;".
++ */
++internal object QrPairing {
++    class Offer(val name: String, val password: String)
++
++    /** [config] is the settings JSON without the pairing object (null for a bare pairing QR). */
++    class Scanned(val config: String?, val offer: Offer?)
++
++    private const val KEY = "adbPairing"
++    private val NAME = Regex("^[A-Za-z0-9._-]{4,63}$")
++    private val PASSWORD = Regex("^[A-Za-z0-9._-]{6,64}$")
++
++    fun read(raw: String): Scanned {
++        val text = raw.trim()
++        parseWifi(text)?.let { return Scanned(null, it) }
++        val obj = try { JSONObject(text) } catch (e: Exception) { return Scanned(text, null) }
++        val pairing = obj.optJSONObject(KEY) ?: return Scanned(text, null)
++        obj.remove(KEY)
++        return Scanned(obj.toString(), offer(pairing.optString("name"), pairing.optString("password")))
++    }
++
++    private fun offer(name: String, password: String): Offer? =
++        if (NAME.matches(name) && PASSWORD.matches(password)) Offer(name, password) else null
++
++    private fun parseWifi(text: String): Offer? {
++        if (!text.startsWith("WIFI:", ignoreCase = true) || text.contains('\\')) return null
++        val fields = text.substring(5).split(';').filter { it.isNotEmpty() }.mapNotNull {
++            val i = it.indexOf(':')
++            if (i <= 0) null else it.substring(0, i) to it.substring(i + 1)
++        }.toMap()
++        if (!fields["T"].equals("ADB", ignoreCase = true)) return null
++        return offer(fields["S"].orEmpty(), fields["P"].orEmpty())
++    }
++}
 diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/SipRegistrationGate.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/SipRegistrationGate.kt
 index 6ff4ea3..7643fd7 100644
 --- a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/SipRegistrationGate.kt
@@ -849,7 +967,7 @@ index c7c73f7..13bab1d 100644
          }
          fun sipStatus(status: EndpointStatus) {
 diff --git a/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayServicePolicyTest.kt b/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayServicePolicyTest.kt
-index 3e9a77c..1a0c878 100644
+index 3e9a77c..88cbde0 100644
 --- a/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayServicePolicyTest.kt
 +++ b/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayServicePolicyTest.kt
 @@ -3,7 +3,7 @@ package io.github.sparkcyf.voicesipagent.app
@@ -874,7 +992,7 @@ index 3e9a77c..1a0c878 100644
 +        val down = HealthState(takeover = true, shellHelper = HelperConnector.State.NOT_RUNNING)
 +        assertEquals("Helper not connected. Turn on Wireless debugging and tap here to reconnect.", GatewayService.summary(down))
 +        val pairing = down.copy(shellHelper = HelperConnector.State.PAIRING_REQUIRED)
-+        assertEquals("Pairing needed. Tap here, then Pair this phone.", GatewayService.summary(pairing))
++        assertEquals("Pairing needed. Tap here and follow First setup.", GatewayService.summary(pairing))
 +        val binding = down.copy(shellHelper = HelperConnector.State.BINDING)
 +        assertEquals("Setup needed · helper binding", GatewayService.summary(binding))
          assertEquals("Call takeover off", GatewayService.summary(down.copy(takeover = false)))
@@ -1288,13 +1406,15 @@ index 0000000..22bf8ba
 +}
 diff --git a/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/HelperConnector.kt b/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/HelperConnector.kt
 new file mode 100644
-index 0000000..8363621
+index 0000000..2ecc5f9
 --- /dev/null
 +++ b/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/HelperConnector.kt
-@@ -0,0 +1,428 @@
+@@ -0,0 +1,593 @@
 +package io.github.sparkcyf.voicesipagent.privileged
 +
 +import android.content.Context
++import android.net.nsd.NsdManager
++import android.net.nsd.NsdServiceInfo
 +import android.os.Binder
 +import android.os.IBinder
 +import android.provider.Settings
@@ -1309,6 +1429,7 @@ index 0000000..8363621
 +import java.util.concurrent.ScheduledExecutorService
 +import java.util.concurrent.ScheduledFuture
 +import java.util.concurrent.TimeUnit
++import java.util.concurrent.atomic.AtomicBoolean
 +
 +/**
 + * App-side lifecycle of the privileged helper, with no Shizuku involved. The app talks to adbd over
@@ -1358,6 +1479,14 @@ index 0000000..8363621
 +    private var pairingMdns: AdbMdns? = null
 +    @Volatile private var pairingHost: String? = null
 +    @Volatile private var pairingPort = 0
++
++    // Pairing by QR: the Central's QR carries a service name and a password; see armQrPairing.
++    private var qrListener: NsdManager.DiscoveryListener? = null
++    private var qrTimeout: ScheduledFuture<*>? = null
++    private var qrName = ""
++    private var qrPassword = ""
++    private var qrCallback: ((Boolean, String) -> Unit)? = null
++    private var qrAttempts = 0
 +
 +    @Synchronized
 +    fun start() {
@@ -1430,16 +1559,7 @@ index 0000000..8363621
 +                "Pairing failed: ${t.message ?: t.javaClass.simpleName}"
 +            }
 +            if (problem == null) {
-+                log("helper: paired")
-+                val runAfter: Boolean
-+                synchronized(this) {
-+                    runAfter = started
-+                    backoffMs = FIRST_RETRY_MS
-+                }
-+                if (runAfter) {
-+                    set(State.NOT_RUNNING, null, "paired, starting the helper")
-+                    scheduleAttempt(500)
-+                }
++                afterPaired()
 +                onResult(true, "Paired. Starting the helper.")
 +            } else {
 +                log("helper: $problem")
@@ -1447,6 +1567,168 @@ index 0000000..8363621
 +                onResult(false, problem)
 +            }
 +        })
++    }
++
++    /** Common tail of every successful pairing: start the helper now if the gateway is on. */
++    private fun afterPaired() {
++        log("helper: paired")
++        val runAfter: Boolean
++        synchronized(this) {
++            runAfter = started
++            backoffMs = FIRST_RETRY_MS
++        }
++        if (runAfter) {
++            set(State.NOT_RUNNING, null, "paired, starting the helper")
++            scheduleAttempt(500)
++        } else {
++            set(State.STOPPED, null, "paired; turn on Take over calls to start the helper")
++        }
++    }
++
++    // ---- pairing by QR (nothing to type) ---------------------------------------------------------
++
++    /**
++     * Pairing without a code: the Central shows a QR with a random service name and password
++     * (WIFI:T:ADB;S:name;P:password;;) and also hands both to this app. The user scans that QR in
++     * Settings ("Pair device with QR code"); Settings then advertises a pairing service called [name]
++     * on this phone. This listens for exactly that service and pairs with [password]. [onResult] runs
++     * on a helper thread once it is paired or has given up.
++     */
++    fun armQrPairing(name: String, password: String, onResult: (Boolean, String) -> Unit) {
++        exec.execute(Runnable { startQrDiscovery(name, password, onResult, resetAttempts = true) })
++    }
++
++    fun disarmQrPairing() {
++        exec.execute(Runnable { stopQrDiscovery() })
++    }
++
++    @Synchronized
++    private fun startQrDiscovery(name: String, password: String, onResult: (Boolean, String) -> Unit, resetAttempts: Boolean) {
++        stopQrDiscovery()
++        if (resetAttempts) qrAttempts = 0
++        qrName = name
++        qrPassword = password
++        qrCallback = onResult
++        val nsd = app.getSystemService(NsdManager::class.java)
++        if (nsd == null) {
++            onResult(false, "Network service discovery is not available on this phone")
++            return
++        }
++        val busy = AtomicBoolean(false)
++        val listener = object : NsdManager.DiscoveryListener {
++            override fun onDiscoveryStarted(serviceType: String) {
++                log("helper: waiting for the pairing QR in Settings")
++            }
++
++            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
++                log("helper: could not listen for the pairing service ($errorCode)")
++                onResult(false, "Could not listen for the pairing service (error $errorCode)")
++            }
++
++            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
++
++            override fun onDiscoveryStopped(serviceType: String) {}
++
++            override fun onServiceLost(serviceInfo: NsdServiceInfo) {}
++
++            override fun onServiceFound(serviceInfo: NsdServiceInfo) {
++                if (!serviceInfo.serviceName.startsWith(name, ignoreCase = true)) return
++                if (!busy.compareAndSet(false, true)) return
++                log("helper: pairing service found")
++                resolveForQr(nsd, serviceInfo, busy, 0)
++            }
++        }
++        qrListener = listener
++        try {
++            nsd.discoverServices(PAIRING_SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
++        } catch (t: Throwable) {
++            qrListener = null
++            onResult(false, "Could not listen for the pairing service: ${t.message ?: t.javaClass.simpleName}")
++            return
++        }
++        qrTimeout = exec.schedule(Runnable { stopQrDiscovery() }, QR_PAIRING_MINUTES, TimeUnit.MINUTES)
++        if (state != State.CONNECTED && state != State.BINDING) {
++            set(if (started) State.PAIRING_REQUIRED else state, null, "waiting for you to scan the pairing QR in Settings")
++        }
++    }
++
++    /** Resolves the found service to host and port; Android refuses a second resolve at once, so it retries a few times. */
++    private fun resolveForQr(nsd: NsdManager, found: NsdServiceInfo, busy: AtomicBoolean, tries: Int) {
++        try {
++            nsd.resolveService(found, object : NsdManager.ResolveListener {
++                override fun onResolveFailed(info: NsdServiceInfo, errorCode: Int) {
++                    log("helper: could not resolve the pairing service ($errorCode)")
++                    val listening = synchronized(this@HelperConnector) { qrListener != null }
++                    if (listening && tries < QR_RESOLVE_TRIES) {
++                        exec.schedule(Runnable { resolveForQr(nsd, found, busy, tries + 1) }, 700, TimeUnit.MILLISECONDS)
++                    } else {
++                        busy.set(false)
++                    }
++                }
++
++                override fun onServiceResolved(info: NsdServiceInfo) {
++                    val port = info.port
++                    @Suppress("DEPRECATION")
++                    val host = info.host?.hostAddress
++                    exec.execute(Runnable { finishQrPairing(host, port) })
++                }
++            })
++        } catch (t: Throwable) {
++            log("helper: resolve failed: ${t.message ?: t.javaClass.simpleName}")
++            busy.set(false)
++        }
++    }
++
++    @Synchronized
++    private fun stopQrDiscovery() {
++        qrTimeout?.cancel(false)
++        qrTimeout = null
++        val listener = qrListener ?: return
++        qrListener = null
++        runCatching { app.getSystemService(NsdManager::class.java)?.stopServiceDiscovery(listener) }
++    }
++
++    private fun finishQrPairing(host: String?, port: Int) {
++        val callback = qrCallback ?: return
++        val problem = pairOn(port, qrPassword, host)
++        if (problem == null) {
++            stopQrDiscovery()
++            afterPaired()
++            callback(true, "Paired. Starting the helper.")
++            return
++        }
++        log("helper: $problem")
++        val again: Boolean
++        synchronized(this) {
++            qrAttempts++
++            again = qrAttempts < QR_PAIRING_ATTEMPTS
++        }
++        if (again) {
++            // Settings keeps advertising for a while: look again and retry with the same QR.
++            startQrDiscovery(qrName, qrPassword, callback, resetAttempts = false)
++        } else {
++            stopQrDiscovery()
++            if (started) set(State.PAIRING_FAILED, null, problem)
++            callback(false, problem)
++        }
++    }
++
++    /** Tries loopback first (always reachable on this phone), then the discovered address. Null means paired. */
++    private fun pairOn(port: Int, secret: String, discoveredHost: String?): String? {
++        val adb = AdbKeys.get(app)
++        var problem = "Pairing was refused"
++        for (host in listOfNotNull("127.0.0.1", discoveredHost).distinct()) {
++            try {
++                if (adb.pair(host, port, secret)) {
++                    prefs.edit().putString(KEY_PAIRED_FOR, adb.fingerprint).apply()
++                    return null
++                }
++            } catch (t: Throwable) {
++                problem = "Pairing failed: ${t.message ?: t.javaClass.simpleName}"
++                log("helper: pairing on $host:$port failed: ${t.message}")
++            }
++        }
++        return problem
 +    }
 +
 +    // ---- connect + start ----------------------------------------------------------------------
@@ -1685,12 +1967,9 @@ index 0000000..8363621
 +        }
 +        val port = typedPort ?: pairingPort
 +        if (port <= 0) return "Pairing dialog not found. Open Developer options > Wireless debugging > Pair device with pairing code, then enter the code again"
-+        val host = if (typedPort != null) "127.0.0.1" else (pairingHost ?: "127.0.0.1")
-+        val adb = AdbKeys.get(app)
-+        if (!adb.pair(host, port, code)) return "Pairing was refused"
-+        prefs.edit().putString(KEY_PAIRED_FOR, adb.fingerprint).apply()
-+        stopPairingDiscovery()
-+        return null
++        val problem = pairOn(port, code, if (typedPort != null) null else pairingHost)
++        if (problem == null) stopPairingDiscovery()
++        return problem
 +    }
 +
 +    private fun set(s: State, svc: IPrivilegedService?, why: String) {
@@ -1713,6 +1992,10 @@ index 0000000..8363621
 +        private const val STARTER_WAIT_MS = 8_000L
 +        private const val BINDER_WAIT_MS = 15_000L
 +        private const val PAIRING_DISCOVERY_MINUTES = 3L
++        private const val QR_PAIRING_MINUTES = 10L
++        private const val QR_PAIRING_ATTEMPTS = 3
++        private const val QR_RESOLVE_TRIES = 4
++        private const val PAIRING_SERVICE_TYPE = "_adb-tls-pairing._tcp"
 +
 +        @Volatile private var active: HelperConnector? = null
 +

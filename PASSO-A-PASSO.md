@@ -298,23 +298,28 @@ Android vai pedir para permitir "instalar apps desconhecidos" para o app que voc
 Se o celular for Xiaomi, POCO, Redmi ou Infinix e não deixar instalar, copie o arquivo e instale pelo
 gerenciador de arquivos; em Samsung, desligue o **Auto Blocker**.
 
-**6.2 Parear o celular (uma vez só).** O app precisa de uma permissão que o Android só dá pela Depuração sem
-fio, e ele mesmo pede. Com o celular no Wi-Fi:
+**6.2 Configurar e parear o celular (uma vez só).** O app precisa de uma permissão que o Android só dá pela
+Depuração sem fio, e ele mesmo pede. Você não digita código nenhum: a Central mostra dois QR codes e o app faz o
+resto. Com o celular no mesmo Wi-Fi do PC:
 
 1. Ative as **Opções do desenvolvedor**: Configurações, Sobre o telefone, toque 7 vezes em **Número da versão**
-   (pule se já existirem).
-2. Opções do desenvolvedor, ligue **Depuração sem fio** (e confirme "Permitir" para a rede, se perguntar).
-3. Abra o **Voice SIP Agent**. No topo aparece a caixa **First setup: pair this phone**. Toque em **Pair this
-   phone** (no Android 13 ou mais novo, permita as notificações).
-4. As Opções do desenvolvedor abrem. Entre em **Depuração sem fio**, toque em **Parear dispositivo com código de
-   pareamento**. Aparece um código de 6 dígitos.
-5. Puxe a barra de notificações, na notificação **Pair this phone** toque em **Type the code**, digite os 6
-   dígitos e envie.
+   (pule se já existirem; em Samsung ela fica em **Informações do software**).
+2. Opções do desenvolvedor, ligue a **Depuração sem fio** (e confirme "Permitir" para a rede, se perguntar).
+3. No PC, abra a Central, toque no ícone de celular do topo e entre na aba **2. Configurar**. No app, toque em
+   **Scan QR code** (fica na caixa **First setup**, no topo), aponte para o QR e confirme em **Import**. Esse QR
+   leva as configurações do servidor e também a senha do pareamento.
+4. No celular, entre em **Depuração sem fio** e toque em **Parear dispositivo com código QR** (Pair device with
+   QR code). A câmera abre.
+5. Na Central, abra a aba **3. Parear** e aponte a câmera do celular para esse QR.
 
-Esperado: a notificação vira "Phone paired", a caixa de pareamento some e, na aba **Health**, **Privileged
-helper** fica verde ("CONNECTED"). Se o código vier errado ou a janela fechar, abra **Parear dispositivo...**
-de novo (o código muda toda vez) e repita o passo 5. Se a notificação não aparecer, digite o código no campo da
-própria caixa do app, ou `PORTA CÓDIGO` (a porta que a janela de pareamento mostra, um espaço, o código).
+Esperado: em poucos segundos aparece a notificação "Phone paired" e a caixa **First setup** some. Ligue **Take
+over calls** (6.4): na aba **Health** do app, **Privileged helper** fica verde ("CONNECTED") em alguns segundos.
+
+Se não parear: depois do passo 3 o app só fica ouvindo por 10 minutos, e os QRs mudam sempre que você fecha e
+abre o painel da Central (refaça o passo 3). Alguns aparelhos podem não anunciar o pareamento por QR; nesse caso
+use o código: na caixa **First setup**, toque em **QR not working? Pair with the 6-digit code**, entre em
+**Parear dispositivo com código de pareamento** e digite os 6 dígitos na notificação que o app mostra, sem trocar
+de app (o código só vale enquanto a janela do Android está aberta).
 
 **6.3 O que acontece depois.** Nas próximas vezes (inclusive depois de reiniciar o celular) o app liga a Depuração
 sem fio sozinho e reinicia o helper, sem você fazer nada, desde que o celular esteja no Wi-Fi e o **Take over
@@ -322,7 +327,7 @@ calls** esteja ligado. Se a aba **Health** mostrar "Helper not connected", toque
 
 **6.4 Configurar o servidor.**
 
-*Pelo QR code (recomendado, sem digitar nada).* No PC, abra a Central e toque no ícone de celular, no topo (ou
+*Pelo QR code (recomendado, sem digitar nada; se você fez a Etapa 6.2, já está feito: só ligue **Take over calls**).* No PC, abra a Central e toque no ícone de celular, no topo (ou
 no botão **Conectar celular** da linha "Celular gateway"). A Central mostra um QR code com o IP do PC, a porta,
 o usuário e a senha. No app, role até **Scan QR code**, aponte a câmera para a tela, confira as mudanças e toque
 em **Import**. Depois ligue **Take over calls**. Quando o celular registrar, a Central avisa "Celular conectado".

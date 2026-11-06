@@ -1853,16 +1853,19 @@ function medirAudioChamada() {
 
 /* ===== 8c. Conectar celular (QR para o app Voice SIP Agent) ===== */
 
-// O painel tem duas abas. "1. Baixar o app": QR com o link do APK que a Central serve (pasta apk-celular/).
-// "2. Configurar": QR com o JSON de configuracao que o app sabe importar. Os dois sao montados aqui no
-// navegador com o que o servidor entrega (/api/apk e /api/celular, so ao proprio PC) e nao sao gravados.
+// O painel tem tres abas. "1. Baixar o app": QR com o link do APK que a Central serve (pasta apk-celular/).
+// "2. Configurar": QR com o JSON de configuracao que o app sabe importar, mais a chave extra "adbPairing"
+// (nome e senha de pareamento, sorteados a cada abertura do painel). "3. Parear": o QR que a tela
+// "Parear dispositivo com codigo QR" da Depuracao sem fio do Android le (WIFI:T:ADB;S:nome;P:senha;;), com o
+// mesmo nome e a mesma senha: o app, que recebeu os dois pela aba 2, pareia sozinho. Tudo e montado aqui no
+// navegador com o que o servidor entrega (/api/apk e /api/celular, so ao proprio PC) e nao e gravado.
 var QR_VISIVEL_MS = 120000;
 var CEL_CONSULTA_MS = 5000;
 var TIMER_CEL_CONSULTA = 0;
 var TIMER_CEL_QR = 0;
 var TIMER_CEL_LIMPAR = 0;
 var COMANDO_APK = "python3 -m zipfile -e ~/Downloads/voice-sip-agent-apk.zip modulos/central/apk-celular";
-S.celular = null; // { aba, carregando, erro, dados, apk, apkErro, ips, ip, outro, qrVisivel, viuOffline }
+S.celular = null; // { aba, carregando, erro, dados, apk, apkErro, ips, ip, outro, par, qrVisivel, viuOffline }
 
 function ipValido(ip) {
   var m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(String(ip || "").trim());
@@ -1886,6 +1889,25 @@ function tamanhoTxt(bytes) {
   return (Number(bytes) / 1048576).toFixed(1).replace(".", ",") + " MB";
 }
 
+// 32 simbolos (base32 em minusculas): 256 e multiplo de 32, entao o sorteio por resto nao tem vies.
+var ALFABETO_PAR = "abcdefghijklmnopqrstuvwxyz234567";
+
+/** n caracteres sorteados com o gerador seguro do navegador. So letras e numeros: vao em QR e em JSON sem escape. */
+function sorteio(n) {
+  var bytes = new Uint8Array(n);
+  crypto.getRandomValues(bytes);
+  var s = "";
+  for (var i = 0; i < n; i++) {
+    s += ALFABETO_PAR.charAt(bytes[i] % ALFABETO_PAR.length);
+  }
+  return s;
+}
+
+/** Nome e senha do pareamento desta abertura do painel (o mesmo par vai na aba 2 e na aba 3). */
+function novoPareamento() {
+  return { nome: "studio-" + sorteio(10), senha: sorteio(12) };
+}
+
 /** O JSON que o app importa (formato voice-sip-agent-config v1). So as chaves que a Central conhece. */
 function jsonCelular() {
   var c = S.celular;
@@ -1893,12 +1915,23 @@ function jsonCelular() {
   if (!d) {
     return "";
   }
-  return JSON.stringify({
+  var cfg = {
     format: "voice-sip-agent-config",
     version: 1,
     sip: { server: String(c.ip).trim(), port: d.porta, transport: "udp", srtp: "off", domain: "", user: d.usuario, password: d.senha },
     routing: { target: d.usuario }
-  });
+  };
+  if (c.par) {
+    // Chave extra que so o nosso app entende: ele a separa antes de ler o arquivo.
+    cfg.adbPairing = { name: c.par.nome, password: c.par.senha };
+  }
+  return JSON.stringify(cfg);
+}
+
+/** O QR que o Android le em "Parear dispositivo com codigo QR": WIFI:T:ADB;S:nome;P:senha;; */
+function textoPar() {
+  var c = S.celular;
+  return c && c.par ? "WIFI:T:ADB;S:" + c.par.nome + ";P:" + c.par.senha + ";;" : "";
 }
 
 /** O link que o celular abre para baixar o APK: IP escolhido, mesma porta desta pagina. */
@@ -1966,6 +1999,11 @@ function renderCelAba() {
   }
   $("#chCelApk").hidden = c.aba !== "apk";
   $("#chCelCfg").hidden = c.aba !== "config";
+  $("#chCelPar").hidden = c.aba !== "par";
+  var ipCaixa = $("#chCelIp");
+  if (ipCaixa) {
+    ipCaixa.hidden = c.aba === "par"; // o QR de pareamento nao depende do IP
+  }
 }
 
 function renderCelEstado() {
@@ -1987,11 +2025,16 @@ function renderCelEstado() {
     texto = e.ari.erro || "";
   } else if (e) {
     titulo = "Aguardando o celular";
-    texto = "Escaneie o QR no app. Esta tela avisa quando ele registrar.";
+    texto = "Siga os passos desta aba. Esta tela avisa quando o celular registrar.";
   }
-  el.innerHTML =
+  var linha =
     '<span class="ch-ponto ch-n-' + nivel + '"></span>' +
     '<div class="ch-linha-txt"><strong>' + esc(titulo) + "</strong><span>" + esc(texto) + "</span></div>";
+  el.innerHTML = linha;
+  var outra = $("#chCelEstadoPar");
+  if (outra) {
+    outra.innerHTML = linha;
+  }
 }
 
 function renderCelApk() {
@@ -2072,6 +2115,19 @@ function renderCelQr() {
     '<button class="btn btn-suave" data-acao="celular-qr">' + (c.qrVisivel ? "Esconder QR" : "Mostrar QR") + "</button></div>";
 }
 
+/** O QR da aba 3 (pareamento). Segue o mesmo "esconder por seguranca" do QR da aba 2. */
+function renderCelParQr() {
+  var el = $("#chCelParQr");
+  var c = S.celular;
+  if (!el || !c) {
+    return;
+  }
+  var h = c.qrVisivel ? htmlQr(textoPar()) : '<p class="ch-dica">QR escondido por segurança.</p>';
+  el.innerHTML =
+    '<div class="ch-qr-caixa">' + h +
+    '<button class="btn btn-suave" data-acao="celular-qr">' + (c.qrVisivel ? "Esconder QR" : "Mostrar QR") + "</button></div>";
+}
+
 function renderCelIp() {
   var el = $("#chCelIp");
   var c = S.celular;
@@ -2105,18 +2161,30 @@ function htmlCelular() {
     '<div class="ch-celular">' +
     '<div class="segmentado ch-cel-abas" id="chCelAbas" role="tablist"><span class="indicador"></span>' +
     '<button data-acao="celular-aba" data-valor="apk" role="tab">1. Baixar o app</button>' +
-    '<button data-acao="celular-aba" data-valor="config" role="tab">2. Configurar</button></div>' +
+    '<button data-acao="celular-aba" data-valor="config" role="tab">2. Configurar</button>' +
+    '<button data-acao="celular-aba" data-valor="par" role="tab">3. Parear</button></div>' +
     '<div class="ch-cel-painel" id="chCelApk"><div id="chCelApkCorpo"></div></div>' +
     '<div class="ch-cel-painel" id="chCelCfg">' +
     '<div class="ch-linha ch-cel-estado" id="chCelEstado"></div>' +
     '<ol class="ch-cel-passos">' +
-    "<li>Instale o app e faça o pareamento (a caixa <strong>First setup</strong> no topo do app explica; é uma vez só, Etapa 6).</li>" +
-    "<li>No app, role até <strong>Scan QR code</strong> e toque nele.</li>" +
+    "<li>Instale o app (aba 1) e abra-o.</li>" +
+    "<li>No app, toque em <strong>Scan QR code</strong> (fica na caixa <strong>First setup</strong>, no topo; depois do pareamento a caixa some e o botão fica na seção <strong>Configuration file</strong>).</li>" +
     "<li>Aponte a câmera para o QR abaixo, confira as mudanças e toque em <strong>Import</strong>.</li>" +
-    "<li>Ligue <strong>Take over calls</strong> no app.</li>" +
+    "<li>Na primeira vez, siga para a aba <strong>3. Parear</strong>. Depois, ligue <strong>Take over calls</strong> no app.</li>" +
     "</ol>" +
     '<div id="chCelQr"></div>' +
     '<p class="ch-dica">O QR contém a senha do celular: não mostre a ninguém nem tire foto. Ele se esconde sozinho em 2 minutos.</p>' +
+    "</div>" +
+    '<div class="ch-cel-painel" id="chCelPar">' +
+    '<div class="ch-linha ch-cel-estado" id="chCelEstadoPar"></div>' +
+    '<ol class="ch-cel-passos">' +
+    "<li>Antes, na aba <strong>2. Configurar</strong>, escaneie o QR no app. É ali que o app recebe a senha deste pareamento.</li>" +
+    "<li>No celular (no mesmo Wi-Fi do computador): Configurações, Opções do desenvolvedor, ligue a <strong>Depuração sem fio</strong> (Wireless debugging) e toque nela para entrar.</li>" +
+    "<li>Toque em <strong>Parear dispositivo com código QR</strong> (Pair device with QR code). A câmera abre: aponte para o QR abaixo.</li>" +
+    "<li>Pronto. O app pareia sozinho e avisa numa notificação. Não digite código nenhum.</li>" +
+    "</ol>" +
+    '<div id="chCelParQr"></div>' +
+    '<p class="ch-dica">É uma vez só. O QR contém a senha do pareamento: não tire foto; ele se esconde sozinho em 2 minutos. Se fechar esta janela, os QRs mudam: escaneie a aba 2 de novo.</p>' +
     "</div>" +
     '<div id="chCelIp"></div>' +
     "</div>"
@@ -2130,6 +2198,7 @@ function agendarQr() {
     if (c && c.qrVisivel) {
       c.qrVisivel = false;
       renderCelQr();
+      renderCelParQr();
     }
   }, QR_VISIVEL_MS);
 }
@@ -2162,6 +2231,7 @@ function consultarCelular() {
       clearTimeout(TIMER_CEL_QR);
       toast("Celular conectado");
       renderCelQr();
+      renderCelParQr();
     }
     renderCelEstado();
     render();
@@ -2212,6 +2282,7 @@ function abrirCelular() {
     ips: [],
     ip: "",
     outro: false,
+    par: novoPareamento(),
     qrVisivel: true,
     viuOffline: !!(e0 && e0.ari && e0.ari.ok && !celularConectado())
   };
@@ -2222,6 +2293,7 @@ function abrirCelular() {
   renderCelApk();
   renderCelIp();
   renderCelQr();
+  renderCelParQr();
   var pCel = api("/api/celular")
     .then(function (d) {
       meu.dados = exigirOk(d);
@@ -2275,11 +2347,11 @@ function pararCelular() {
 
 function trocarAbaCelular(aba) {
   var c = S.celular;
-  if (!c || (aba !== "apk" && aba !== "config")) {
+  if (!c || (aba !== "apk" && aba !== "config" && aba !== "par")) {
     return;
   }
   c.aba = aba;
-  if (aba === "config" && c.qrVisivel) {
+  if (aba !== "apk" && c.qrVisivel) {
     agendarQr();
   }
   renderCelAba();
@@ -2300,6 +2372,7 @@ function alternarQrCelular() {
     clearTimeout(TIMER_CEL_QR);
   }
   renderCelQr();
+  renderCelParQr();
 }
 
 function escolherIpCelular(valor) {

@@ -24,9 +24,13 @@ Tira a dependencia do app **Shizuku**. O Voice SIP Agent precisa rodar um pedaco
 (uid 2000) para capturar e injetar o audio da chamada; o upstream pedia o Shizuku para isso. Com este patch o
 proprio app faz o que o Shizuku fazia:
 
-- **Pareamento unico.** O app e cliente ADB (biblioteca libadb-android 3.1.1, do JitPack). Na primeira vez voce
-  liga a Depuracao sem fio, toca em **Pair this phone** e digita numa notificacao o codigo de 6 digitos da janela
-  "Parear dispositivo com codigo". A chave RSA do app fica em `files/` (so o app le).
+- **Pareamento unico, sem digitar.** O app e cliente ADB (biblioteca libadb-android 3.1.1, do JitPack). O QR de
+  configuracao da Central ganha a chave extra `adbPairing` (nome e senha sorteados a cada abertura do painel); o
+  app a separa antes de ler o arquivo, guarda os dois e passa a procurar o servico mDNS `_adb-tls-pairing._tcp`
+  com aquele nome. Em Depuracao sem fio, **Parear dispositivo com codigo QR**, o celular le o segundo QR da
+  Central (`WIFI:T:ADB;S:nome;P:senha;;`) e anuncia o servico; o app, que ja sabe a senha, pareia sozinho (tenta
+  127.0.0.1 e depois o endereco anunciado). Digitar o codigo de 6 digitos continua como alternativa. A chave RSA
+  do app fica em `files/` (so o app le).
 - **Helper como shell.** A cada partida o app conecta no `adbd` do proprio celular (127.0.0.1, porta TLS), roda um
   comando de shell que inicia `HelperMain` (`app_process` como uid 2000, `CLASSPATH` = o APK do app) e fecha a
   conexao ADB. O helper entrega o `Binder` ao app por um `ContentProvider` protegido por
@@ -41,8 +45,10 @@ proprio app faz o que o Shizuku fazia:
 - Foi escrito para o commit `298d64b...` (v0.4.1), aplicado **depois** do `qr-scan.patch`.
 
 **Limites:** nunca foi compilado nem testado em aparelho antes da primeira execucao do workflow, entao o primeiro
-build pode falhar (o log diz onde). O pareamento usa mDNS (Android pode demorar a anunciar); se a notificacao nao
-achar a janela de pareamento, digite `PORTA CODIGO` no campo da caixa **First setup**.
+build pode falhar (o log diz onde). O pareamento por QR depende de o celular anunciar o servico de pareamento
+com o nome do QR e de o app conseguir descobri-lo em segundo plano (nao testado em Samsung One UI). Se nao
+parear, a caixa **First setup** tem a alternativa do codigo de 6 digitos, respondido numa notificacao (nao
+precisa trocar de app).
 
 ## Licenca
 
