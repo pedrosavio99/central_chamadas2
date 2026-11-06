@@ -38,3 +38,20 @@ importa é `JsSIP.version` valer `"3.13.9"` no console do navegador.
   INFO, que o Asterisk ignora neste cenário).
 - `unmute({audio: true})`: o padrão do JsSIP religa o vídeo também.
 - Sem servidor STUN (`iceServers: []`): na v1 tudo é local.
+
+## qrcode.js
+
+- Biblioteca: [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) 2.0.4 (Kazuhiko Arase),
+  licença MIT (texto em `QRCODE-LICENSE.md`).
+- Papel: desenha o QR code de "Conectar celular". É o arquivo `dist/qrcode.js` do pacote npm, copiado sem
+  alteração, e a tela usa o global `qrcode`.
+- SHA-256 do arquivo: `79ec86f82856005b1c887905cfccfcfbec3821ca61c7fd5a952faa5f778f791c`.
+
+Para conferir (opcional):
+
+```bash
+mkdir -p /tmp/qrlib && cd /tmp/qrlib
+npm init -y > /dev/null
+npm install --save-exact qrcode-generator@2.0.4
+sha256sum node_modules/qrcode-generator/dist/qrcode.js
+```

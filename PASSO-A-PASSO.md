@@ -141,6 +141,8 @@ Se falhar: me mande a saída do `git push`.
 
 Objetivo: obter o arquivo `.apk` do app **Voice SIP Agent**. O repositório do app não publica APK pronto, então
 o workflow `.github/workflows/gerar-apk.yml` baixa o código dele (fixado pelo commit da versão 0.4.1) e compila.
+Antes de compilar, ele aplica o patch `apk/qr-scan.patch` (deste repositório), que acrescenta ao app o botão
+**Scan QR code**: é por ele que a Central configura o celular sem digitar nada (Etapa 6.4).
 
 1. No GitHub, abra o seu repositório, aba **Actions**.
 2. Na lista da esquerda, clique em **Gerar APK do celular gateway**.
@@ -161,7 +163,7 @@ sha256sum -c *.sha256
 Esperado (o trecho do meio é o início do hash do commit):
 
 ```text
-voice-sip-agent-298d64b89b-debug.apk: OK
+voice-sip-agent-298d64b89b-qr-debug.apk: OK
 ```
 
 O hash completo também aparece no resumo da execução no GitHub.
@@ -261,8 +263,10 @@ navegador/Asterisk" de "problema no celular". **Use fones de ouvido** (senão d�
 
 1. Com o servidor rodando, na tela digite `600`.
 2. Clique em **Ligar** (o botão fica habilitado mesmo com o celular offline, só para este número).
-3. O navegador pede permissão do microfone: **Permitir**.
-4. Fale. Você deve ouvir a sua própria voz de volta, com um pequeno atraso.
+3. Antes de ligar, no cartão **Áudio** clique em **Testar microfone** e em **Permitir**. Fale: a barra verde
+   precisa mexer. Se não mexer, escolha outro microfone na lista. **Gravar 3 s e ouvir** confere também o som que sai.
+4. Ligue e fale. O 600 não diz nada sozinho: ele só devolve a sua voz, com um pequeno atraso, depois de 1 segundo
+   de silêncio. Na faixa da chamada aparece uma linha "Áudio: ..." que diz se o som está indo e voltando.
 5. Clique em **Desligar**. A chamada aparece no histórico como "Atendida".
 
 Se você não ouvir nada: confirme que o PC está conectado a alguma rede (Wi-Fi ou cabo; o WebRTC precisa de um
@@ -291,7 +295,17 @@ conhecido nesses aparelhos).
 **6.3 Dar permissão.** Abra o **Voice SIP Agent**. Na aba **Health**, toque em **Grant Shizuku** e permita.
 A configuração roda sozinha.
 
-**6.4 Configurar o servidor.** Na aba **Settings**, preencha com o bloco que o `instalar.sh` mostrou:
+**6.4 Configurar o servidor.**
+
+*Pelo QR code (recomendado, sem digitar nada).* No PC, abra a Central e toque no ícone de celular, no topo (ou
+no botão **Conectar celular** da linha "Celular gateway"). A Central mostra um QR code com o IP do PC, a porta,
+o usuário e a senha. No app, role até **Scan QR code**, aponte a câmera para a tela, confira as mudanças e toque
+em **Import**. Depois ligue **Take over calls**. Quando o celular registrar, a Central avisa "Celular conectado".
+Isso exige o APK gerado pelo workflow depois desta atualização (ele traz o botão de scan) e Google Play Services
+no celular. Se o IP que a Central mostrou não for o do PC na sua rede, escolha o outro na lista ou digite o certo.
+
+*Digitando (se o APK for o original, sem o botão de scan).* Na aba **Settings**, preencha com o bloco que o
+`instalar.sh` mostrou:
 
 | Campo no app | Valor |
 |---|---|

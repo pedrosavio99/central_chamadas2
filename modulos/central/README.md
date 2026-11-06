@@ -46,6 +46,7 @@ projeto/
 │   ├── estilos.css                 # tokens e componentes compartilhados
 │   └── app.js
 ├── .github/workflows/gerar-apk.yml # compila o app do celular (não faz parte do módulo)
+├── apk/qr-scan.patch               # botão Scan QR code do app (o workflow aplica)
 ├── modulos/central/
 │   ├── servidor/
 │   │   ├── index.js                # router Express: HTML, estáticos e /api
@@ -56,7 +57,7 @@ projeto/
 │   │   ├── central.css             # prefixo .ch-, só cores por token
 │   │   ├── central.js              # estado S, render, cliques, ramal JsSIP
 │   │   ├── aba-central.js          # injeta o chip no host
-│   │   └── vendor/                 # JsSIP 3.13.9 (ver vendor/LEIAME.md)
+│   │   └── vendor/                 # JsSIP 3.13.9 e qrcode-generator 2.0.4 (ver vendor/LEIAME.md)
 │   ├── asterisk/
 │   │   ├── instalar.sh             # instala e configura o Asterisk
 │   │   └── *.conf.modelo           # modelos de pjsip, extensions, http, ari, rtp, modules
@@ -75,6 +76,7 @@ Prefixo `/central`. Respostas em JSON, sempre com `Cache-Control: no-store`.
 | `GET /central/` | A tela | `no-store` |
 | `GET /central/api/health` | `{ok, modulo, versao, mock, somenteLeitura}` | Sem credencial. Serve para saber se o módulo está montado |
 | `GET /central/api/config` | Dados do ramal para o JsSIP (`wsUrl`, `ramal`, `senha`...) | Exige senhas no `.env`. Só responde ao próprio PC e a Origin local (ver Segurança) |
+| `GET /central/api/celular` | Ingredientes do QR de "Conectar celular": `ips` (IPv4 de rede local do PC), `porta`, `usuario`, `senha` (a `GW_SENHA`) | Exige `GW_SENHA` no `.env` (senão 409 com a dica). Mesmas travas do `/api/config`: só o próprio PC e Origin local |
 | `GET /central/api/estado` | Celular e ramal vistos pelo Asterisk (via ARI) | Cache de `CACHE_TTL_MS`. Se o ARI cai, volta `ari.ok:false` com `erro` e `dica`, sem HTTP de erro |
 | `GET /central/api/chamadas` | Histórico (até 200, mais novas primeiro) | |
 | `POST /central/api/chamadas` | Grava uma chamada no histórico | Passa por `guardaDeEscrita`: bloqueada com `READ_ONLY=1` e com Origin externa |
@@ -125,6 +127,9 @@ O `asterisk/instalar.sh` preenche os `*.conf.modelo` com senhas aleatórias e gr
 
 - `/api/config` entrega a senha do ramal. Ela só sai se a conexão vem do próprio PC (loopback) e a Origin, se
   existir, é local. Quem acessa pelo IP da rede recebe 403. `CONFIG_REMOTA=1` desliga essa trava.
+- `/api/celular` entrega a senha do celular gateway (`GW_SENHA`) com as mesmas travas. O navegador monta o JSON
+  do QR e desenha o QR sem gravar nada; o QR se esconde sozinho em 2 minutos e some da tela ao fechar o painel.
+  Quem fotografa ou filma o QR consegue registrar um celular no seu Asterisk: não mostre a tela a estranhos.
 - Com a senha do ramal, qualquer pessoa liga pelo seu chip. Por isso a senha é aleatória (32 caracteres
   hexadecimais), fica só no `.env` (fora do GitHub) e o dialplan limita os destinos.
 - Não existe login na tela. Se o PC está numa rede que você não controla, libere a porta 3333 só para você

@@ -10,6 +10,7 @@ import {
   exigirToken,
   buscarEstado,
   montarConfig,
+  montarCelular,
   listarChamadas,
   registrarChamada
 } from "./nucleo.mjs";
@@ -19,6 +20,7 @@ const VERSAO = "1.0.0";
 const ROTAS_VALIDAS = [
   "GET /api/health",
   "GET /api/config",
+  "GET /api/celular",
   "GET /api/estado",
   "GET /api/chamadas",
   "POST /api/chamadas"
@@ -107,6 +109,14 @@ export async function rotear(req, url) {
     verificarOrigem(req);
     exigirLocal(req);
     return montarConfig();
+  }
+
+  // Entrega a senha do celular gateway (para o QR): mesmas travas do /api/config, so o proprio PC.
+  if (metodo === "GET" && caminho === "/api/celular") {
+    exigirToken();
+    verificarOrigem(req);
+    exigirLocal(req);
+    return montarCelular();
   }
 
   if (metodo === "GET" && caminho === "/api/estado") {

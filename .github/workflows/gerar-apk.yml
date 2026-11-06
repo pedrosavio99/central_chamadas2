@@ -7,6 +7,10 @@
 # (compila OpenSSL, Opus e PJSIP para Android do zero). Quando acabar, o APK fica no fim da pagina da
 # execucao, em "Artifacts". Ele vem num .zip: extraia e instale o .apk no celular.
 #
+# QR code: depois de baixar o app, o workflow aplica o patch apk/qr-scan.patch (deste repositorio), que
+# acrescenta o botao "Scan QR code" na tela de configuracao. E com ele que a Central configura o celular
+# sem digitar nada. O patch mexe so no app (31 linhas, 4 arquivos): leia-o antes de compilar.
+#
 # Seguranca: o app ganha poderes de shell no celular via Shizuku. Por isso o codigo e FIXADO por hash
 # de commit (o padrao abaixo e o v0.4.1) e as actions abaixo tambem sao fixadas por hash. Para usar
 # outra versao, confira o codigo antes e cole o hash novo no campo "versao".
@@ -46,6 +50,30 @@ jobs:
           ref: ${{ inputs.versao }}
           path: app
           persist-credentials: false
+
+      - name: Baixar o patch do QR code (do seu repositorio)
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: central
+          sparse-checkout: apk
+          persist-credentials: false
+
+      - name: Aplicar o patch do QR code no app
+        working-directory: app
+        env:
+          VERSAO: ${{ inputs.versao }}
+        run: |
+          set -euo pipefail
+          patch="../central/apk/qr-scan.patch"
+          test -f "$patch" || { echo "Nao achei apk/qr-scan.patch no seu repositorio (faca o commit da pasta apk/)."; exit 1; }
+          if ! git apply --check "$patch"; then
+            echo "O patch do QR code nao encaixa na versao '$VERSAO' do app."
+            echo "Ele foi escrito para a versao padrao do campo 'versao' (v0.4.1). Use o padrao ou atualize apk/qr-scan.patch."
+            exit 1
+          fi
+          git apply "$patch"
+          git diff --stat
 
       - name: Instalar o JDK 17
         # actions/setup-java v6.2.0
@@ -103,7 +131,7 @@ jobs:
           [ "${#apks[@]}" -eq 1 ] && [ -f "${apks[0]}" ] || { echo "esperava 1 APK em app/build/outputs/apk/debug, achei: ${apks[*]}"; exit 1; }
           mkdir -p ../saida
           curto="$(git rev-parse --short=10 HEAD)"
-          nome="voice-sip-agent-${curto}-debug.apk"
+          nome="voice-sip-agent-${curto}-qr-debug.apk"
           cp "${apks[0]}" "../saida/${nome}"
           (cd ../saida && sha256sum "${nome}" | tee "${nome}.sha256")
           {
@@ -112,6 +140,8 @@ jobs:
             echo "Arquivo: \`${nome}\`"
             echo
             echo "Commit do app: \`$(git rev-parse HEAD)\`"
+            echo
+            echo "Patch aplicado: \`apk/qr-scan.patch\` (botao **Scan QR code** no app)."
             echo
             echo "SHA-256: \`$(cut -d' ' -f1 "../saida/${nome}.sha256")\`"
             echo

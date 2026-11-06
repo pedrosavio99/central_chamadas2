@@ -6,6 +6,7 @@
  * chamada (o audio vai direto navegador <-> Asterisk <-> celular, sem passar por este servidor).
  */
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -88,6 +89,9 @@ export const cfg = {
   sipSenha: env("SIP_SENHA"),
   sipNome: env("SIP_NOME", "Atendente"),
   gateway: env("GATEWAY_ENDPOINT", "android-gw"),
+  // Senha e porta que o celular usa para registrar. Servem so para montar o QR de "Conectar celular".
+  gwSenha: env("GW_SENHA"),
+  gwPorta: env("GW_PORTA", "5060"),
   ariUsuario: env("ARI_USUARIO", "central"),
   ariSenha: env("ARI_SENHA")
 };
@@ -226,6 +230,54 @@ export function montarConfig() {
     ...base,
     sip: { wsUrl: cfg.wsUrl, dominio: cfg.sipDominio, ramal: cfg.sipRamal, senha: cfg.sipSenha, nomeExibicao: cfg.sipNome }
   };
+}
+
+/* ===== Dados para configurar o celular (QR) ===== */
+
+// Interfaces que nunca sao a rede do celular: loopback, docker, maquinas virtuais e VPNs.
+const IGNORAR_INTERFACE = /^(lo|docker|br-|veth|virbr|vmnet|vboxnet|tailscale|zt|wg|tun|tap)/i;
+
+function ipPrivado(ip) {
+  const p = String(ip).split(".").map(Number);
+  if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  return p[0] === 10 || (p[0] === 192 && p[1] === 168) || (p[0] === 172 && p[1] >= 16 && p[1] <= 31);
+}
+
+/** IPv4 de rede local deste computador, 192.168.x primeiro (o padrao de roteador domestico). */
+export function ipsLocais(interfaces = os.networkInterfaces()) {
+  const achados = [];
+  for (const [nome, lista] of Object.entries(interfaces || {})) {
+    if (IGNORAR_INTERFACE.test(nome)) continue;
+    for (const e of lista || []) {
+      const v4 = e.family === "IPv4" || e.family === 4;
+      if (!v4 || e.internal || !ipPrivado(e.address)) continue;
+      achados.push({ ip: e.address, interface: nome });
+    }
+  }
+  const peso = (ip) => (ip.startsWith("192.168.") ? 0 : ip.startsWith("10.") ? 1 : 2);
+  return achados.sort((a, b) => peso(a.ip) - peso(b.ip));
+}
+
+/**
+ * O que o navegador precisa para desenhar o QR do app: IP do PC, porta, usuario e senha do celular.
+ * O JSON do QR e montado la; o servidor so entrega os ingredientes (e so ao proprio PC, ver rotas.mjs).
+ */
+export function montarCelular() {
+  const base = { ok: true, mock: cfg.mock, cache: false, carregadoEm: Date.now() };
+  if (cfg.mock) {
+    return { ...base, ips: [{ ip: "192.168.0.10", interface: "wlan0" }], porta: 5060, usuario: cfg.gateway, senha: "mock-senha-celular" };
+  }
+  if (cfg.somenteLeitura) {
+    throw new ErroHttp(403, "Modo somente leitura (READ_ONLY=1): a senha do celular não é entregue", "Troque READ_ONLY para 0 no .env do módulo e reinicie o servidor.");
+  }
+  if (!cfg.gwSenha) {
+    throw new ErroHttp(
+      409,
+      "Falta a senha do celular (GW_SENHA) no .env do módulo",
+      "Rode: bash modulos/central/asterisk/instalar.sh. Ele cria a GW_SENHA e grava a mesma senha no Asterisk."
+    );
+  }
+  return { ...base, ips: ipsLocais(), porta: Number(cfg.gwPorta) || 5060, usuario: cfg.gateway, senha: cfg.gwSenha };
 }
 
 /* ===== Historico de chamadas (em memoria) ===== */

@@ -253,3 +253,160 @@
   gap: 10px;
   margin-top: 20px;
 }
+
+/* ===== Audio: microfone, saida de som e teste ===== */
+
+.ch-audio {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border-radius: var(--raio-cartao);
+  background: var(--superficie);
+  box-shadow: var(--sombra);
+}
+.ch-audio-topo {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ch-audio-topo strong {
+  font-size: 15px;
+}
+.ch-audio-estado {
+  min-width: 0;
+  font-size: 13px;
+  text-align: right;
+  color: var(--texto-2);
+  overflow-wrap: anywhere;
+}
+.ch-audio-rot {
+  font-size: 14px;
+  color: var(--texto-2);
+}
+.ch-select {
+  width: 100%;
+  min-height: var(--toque);
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--raio-cartao);
+  background: var(--preenchimento);
+  color: var(--texto);
+  font: inherit;
+  font-size: 15px;
+}
+.ch-select:focus {
+  outline: 2px solid var(--destaque);
+}
+.ch-select:disabled {
+  opacity: 0.6;
+}
+.ch-medidor {
+  height: 10px;
+  overflow: hidden;
+  border-radius: var(--raio-pilula);
+  background: var(--preenchimento);
+}
+.ch-medidor-barra {
+  width: 0;
+  height: 100%;
+  border-radius: var(--raio-pilula);
+  background: var(--sucesso);
+  transition: width 80ms linear;
+}
+.ch-audio-acoes {
+  display: flex;
+  gap: 8px;
+}
+.ch-audio-acoes .btn {
+  flex: 1;
+}
+.ch-audio-msg {
+  text-align: left;
+}
+.ch-audio-diag {
+  overflow-wrap: anywhere;
+}
+
+/* ===== Conectar celular (QR) ===== */
+
+.ch-linha-btn {
+  flex: none;
+  align-self: center;
+  min-height: 36px;
+  margin-left: auto;
+  padding: 0 14px;
+  font-size: 14px;
+}
+.ch-celular {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.ch-cel-estado {
+  padding: 0;
+  border-bottom: 0;
+}
+.ch-cel-passos {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding-left: 22px;
+  font-size: 15px;
+  color: var(--texto-2);
+}
+.ch-cel-passos strong {
+  color: var(--texto);
+}
+.ch-qr-caixa {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.ch-qr {
+  width: min(100%, 280px);
+  overflow: hidden;
+  border-radius: var(--raio-cartao);
+  background: var(--qr-fundo);
+  box-shadow: var(--sombra);
+}
+.ch-qr-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.ch-qr-svg path {
+  fill: var(--qr-modulo);
+}
+.ch-cel-aviso {
+  width: 100%;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--raio-cartao);
+  background: var(--aviso-fundo);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.ch-cel-ip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ch-cel-campo {
+  width: 100%;
+  min-height: var(--toque);
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--raio-cartao);
+  background: var(--preenchimento);
+  color: var(--texto);
+  font: inherit;
+  font-size: 15px;
+}
+.ch-cel-campo:focus {
+  outline: 2px solid var(--destaque);
+}

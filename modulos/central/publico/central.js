@@ -24,6 +24,13 @@ var FILTROS = [
 var ROTULO_STATUS = { atendida: "Atendida", perdida: "Perdida", falha: "Falhou" };
 var TECLAS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"];
 
+// Teste de microfone: o nivel e o RMS do sinal (0 a 1). Abaixo de MIC_MUDO nao ha sinal; acima de MIC_VOZ ha voz.
+var MIC_MUDO = 0.003;
+var MIC_VOZ = 0.015;
+var MIC_TESTE_MAX_MS = 30000;
+var MSG_AUDIO_INICIAL = "Clique em Testar microfone, fale e veja a barra mexer. Se não mexer, escolha outro microfone.";
+var MSG_SEM_MIDIA = "Este navegador não libera o microfone nesta página. Abra por http://localhost ou use HTTPS.";
+
 // Textos de causa que o JsSIP devolve (em ingles) traduzidos para quem usa a tela.
 var CAUSAS = {
   "Busy": "Ocupado",
@@ -35,7 +42,7 @@ var CAUSAS = {
   "Connection Error": "Sem conexão com o Asterisk",
   "Terminated": "Encerrada",
   "No Answer": "Ninguém atendeu",
-  "User Denied Media Access": "Microfone negado no navegador",
+  "User Denied Media Access": "Microfone negado ou indisponível no navegador",
   "RTP Timeout": "O áudio caiu",
   "WebRTC Error": "Erro de áudio no navegador",
   "Authentication Error": "Ramal sem permissão (senha recusada)",
@@ -64,8 +71,10 @@ var S = {
   estado: null,
   ramal: "conectando", // conectando | registrado | desconectado | falhou | bloqueado | inseguro | mock
   ramalDica: "",
-  chamada: null, // { direcao, numero, estado, inicio, criadaEm, mudo }
-  numero: ""
+  chamada: null, // { direcao, numero, estado, inicio, criadaEm, mudo, audioMsg }
+  numero: "",
+  // Cartao de audio (so memoria, nada vai para o navegador): dispositivos listados, escolha e estado do teste.
+  audio: { entradas: [], saidas: [], idMic: "", idSaida: "", permissao: "pendente", abrindo: false, testando: false, gravando: false, ouvindo: false, msg: "" }
 };
 
 // Fora do estado porque nao sao dados da tela: sao objetos vivos e timers.
@@ -80,6 +89,23 @@ var TIMER_TOAST = 0;
 var MOCK_TIMERS = [];
 var VIEW_KEY = "";
 var CORPO_MODO = "";
+var MIC_STREAM = null;
+var MIC_CTX = null;
+var MIC_ANALISADOR = null;
+var MIC_BUFFER = null;
+var MIC_NOME = "";
+var MIC_GERACAO = 0;
+var MIC_INICIO = 0;
+var MIC_PICO = 0;
+var MIC_PICO_GRAVACAO = 0;
+var MIC_NIVEL = 0;
+var TIMER_MEDIDOR = 0;
+var TIMER_MIC = 0;
+var TIMER_GRAVACAO = 0;
+var TIMER_DIAGNOSTICO = 0;
+var GRAVADOR = null;
+var REPRODUCAO = null;
+var DIAG = null;
 
 /* ===== 2. Rede ===== */
 
@@ -458,7 +484,9 @@ function saudeLinhas() {
     linhas.push({
       nivel: "erro",
       titulo: "Celular gateway",
-      texto: "Offline. No celular: abra o Voice SIP Agent, confira a aba Health e ligue Take over calls. Se o celular reiniciou, inicie o Shizuku de novo."
+      texto: "Offline. No celular: abra o Voice SIP Agent, confira a aba Health e ligue Take over calls. Se o celular reiniciou, inicie o Shizuku de novo.",
+      acao: "conectar-celular",
+      acaoRotulo: "Conectar celular"
     });
   } else {
     linhas.push({ nivel: "aviso", titulo: "Celular gateway", texto: "O Asterisk não sabe dizer se o celular está online." });
@@ -508,7 +536,9 @@ function renderSaude() {
     var l = linhas[i];
     h +=
       '<div class="ch-linha"><span class="ch-ponto ch-n-' + esc(l.nivel) + '"></span>' +
-      '<div class="ch-linha-txt"><strong>' + esc(l.titulo) + "</strong><span>" + esc(l.texto) + "</span></div></div>";
+      '<div class="ch-linha-txt"><strong>' + esc(l.titulo) + "</strong><span>" + esc(l.texto) + "</span></div>" +
+      (l.acao ? '<button class="btn btn-suave ch-linha-btn" data-acao="' + esc(l.acao) + '">' + esc(l.acaoRotulo) + "</button>" : "") +
+      "</div>";
   }
   el.innerHTML = h + "</section>";
 }
@@ -516,7 +546,7 @@ function renderSaude() {
 /* --- discador --- */
 
 function htmlDiscador() {
-  var h = '<div id="blocoSaude"></div><section class="ch-discador">';
+  var h = '<div id="blocoSaude"></div><div id="blocoAudio"></div><section class="ch-discador">';
   h +=
     '<input id="campoNumero" class="ch-visor" type="tel" inputmode="tel" autocomplete="off"' +
     ' placeholder="DDD + número" aria-label="Número a discar" value="' + esc(S.numero) + '">';
@@ -551,6 +581,7 @@ function atualizarDiscador() {
   var motivo = motivoBloqueio();
   btn.disabled = !!(S.chamada || motivo);
   $("#dicaDiscar").textContent = S.chamada ? "Em chamada: as teclas enviam tons (DTMF)." : motivo;
+  atualizarAudio();
 }
 
 function renderRecentes() {
@@ -601,7 +632,8 @@ function renderChamada() {
   var h =
     '<div class="ch-chamada ch-ch-' + esc(c.estado) + '" role="status">' +
     '<div class="ch-chamada-txt"><strong>' + esc(formatarNumero(c.numero)) + "</strong>" +
-    "<span>" + esc(c.direcao === "entrada" ? "Chamada recebida" : "Chamada feita") + ' · <span id="chTempo">' + esc(rotuloEstadoChamada(c)) + "</span></span></div>" +
+    "<span>" + esc(c.direcao === "entrada" ? "Chamada recebida" : "Chamada feita") + ' · <span id="chTempo">' + esc(rotuloEstadoChamada(c)) + "</span></span>" +
+    '<span class="ch-audio-diag" id="chAudio">' + esc(c.audioMsg || "") + "</span></div>" +
     '<div class="ch-chamada-acoes">';
   if (c.estado === "tocando") {
     h += '<button class="btn ch-btn-atender" data-acao="atender">Atender</button>' +
@@ -684,6 +716,7 @@ function renderCorpo() {
     if (CORPO_MODO !== "discar") {
       corpo.innerHTML = htmlDiscador();
       CORPO_MODO = "discar";
+      renderAudio();
     }
     renderSaude();
     atualizarDiscador();
@@ -707,6 +740,9 @@ function render() {
 
 function mudarAba(aba) {
   S.aba = aba;
+  if (aba !== "discar") {
+    pararTesteMic();
+  }
   render();
 }
 
@@ -752,6 +788,7 @@ function abrirSheet(titulo, html) {
 }
 
 function fecharSheet() {
+  pararCelular();
   $("#sheet").classList.remove("aberto");
   $("#cortina").classList.remove("aberta");
   S.selecionada = null;
@@ -797,6 +834,7 @@ function tocarCampainha(ligar) {
 function limparChamada() {
   clearInterval(TIMER_CHAMADA);
   TIMER_CHAMADA = 0;
+  pararDiagnostico();
   tocarCampainha(false);
   for (var i = 0; i < MOCK_TIMERS.length; i++) {
     clearTimeout(MOCK_TIMERS[i]);
@@ -852,6 +890,7 @@ function marcarAtendida() {
   }, 1000);
   renderChamada();
   atualizarDiscador();
+  iniciarDiagnostico();
 }
 
 function terminou(sessao, e) {
@@ -924,6 +963,7 @@ function chegouChamada(sessao) {
   var id = sessao.remote_identity;
   var bruto = id && id.uri && id.uri.user ? id.uri.user : "";
   var numero = String(bruto).replace(/[^0-9+*#]/g, "").slice(0, 32) || NUMERO_OCULTO;
+  pararTesteMic();
   S.chamada = { direcao: "entrada", numero: numero, estado: "tocando", inicio: 0, criadaEm: Date.now(), mudo: false };
   tocarCampainha(true);
   render();
@@ -1027,6 +1067,7 @@ function ligar() {
     toast(r.erro);
     return;
   }
+  pararTesteMic();
   S.chamada = { direcao: "saida", numero: r.numero, estado: "discando", inicio: 0, criadaEm: Date.now(), mudo: false };
   render();
   if (S.config.mock) {
@@ -1035,7 +1076,7 @@ function ligar() {
   }
   try {
     SESSAO = UA.call("sip:" + r.numero + "@" + S.config.sip.dominio, {
-      mediaConstraints: { audio: true, video: false },
+      mediaConstraints: restricoesMic(),
       // Sem servidor STUN de proposito: na v1 tudo e local e so os candidatos da propria maquina bastam.
       pcConfig: { iceServers: [] },
       rtcOfferConstraints: { offerToReceiveAudio: true, offerToReceiveVideo: false }
@@ -1073,7 +1114,7 @@ function atender() {
     return;
   }
   SESSAO.answer({
-    mediaConstraints: { audio: true, video: false },
+    mediaConstraints: restricoesMic(),
     pcConfig: { iceServers: [] }
   });
 }
@@ -1172,6 +1213,961 @@ function mockEncerrar() {
   } else {
     finalizarChamada("falha", "Cancelada por você");
   }
+}
+
+/* ===== 8b. Audio: escolher e testar o microfone ===== */
+
+function temMidia() {
+  return !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+}
+
+function temSaidaEscolhivel() {
+  return !!(AUDIO && typeof AUDIO.setSinkId === "function");
+}
+
+function temDispositivo(lista, id) {
+  for (var i = 0; i < lista.length; i++) {
+    if (lista[i].id === id) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function htmlOpcoes(lista, atual, rotuloGenerico) {
+  var h = '<option value=""' + (atual ? "" : " selected") + ">Padrão do sistema</option>";
+  for (var i = 0; i < lista.length; i++) {
+    var nome = lista[i].nome || rotuloGenerico + " " + (i + 1);
+    h += '<option value="' + esc(lista[i].id) + '"' + (lista[i].id === atual ? " selected" : "") + ">" + esc(nome) + "</option>";
+  }
+  return h;
+}
+
+/** Monta o cartao. So e refeito quando a lista de dispositivos muda: refazer fecharia um seletor aberto. */
+function renderAudio() {
+  var el = $("#blocoAudio");
+  if (!el) {
+    return;
+  }
+  var a = S.audio;
+  var h =
+    '<section class="ch-audio" aria-label="Teste de áudio">' +
+    '<div class="ch-audio-topo"><strong>Áudio</strong><span class="ch-audio-estado" id="audioEstado"></span></div>' +
+    '<label class="ch-audio-rot" for="selMic">Microfone</label>' +
+    '<select class="ch-select" id="selMic">' + htmlOpcoes(a.entradas, a.idMic, "Microfone") + "</select>";
+  if (temSaidaEscolhivel()) {
+    h +=
+      '<label class="ch-audio-rot" for="selSaida">Saída de som</label>' +
+      '<select class="ch-select" id="selSaida">' + htmlOpcoes(a.saidas, a.idSaida, "Saída") + "</select>";
+  }
+  h +=
+    '<div class="ch-medidor" aria-hidden="true"><div class="ch-medidor-barra" id="medidorBarra"></div></div>' +
+    '<div class="ch-audio-acoes">' +
+    '<button class="btn btn-suave" id="btnTestarMic" data-acao="testar-mic">Testar microfone</button>' +
+    '<button class="btn btn-suave" id="btnGravar" data-acao="gravar-teste">Gravar 3 s e ouvir</button></div>' +
+    '<p class="ch-dica ch-audio-msg" id="audioMsg" role="status" aria-live="polite"></p></section>';
+  el.innerHTML = h;
+  atualizarAudio();
+}
+
+function rotuloEstadoMic() {
+  var a = S.audio;
+  if (!temMidia()) {
+    return "indisponível";
+  }
+  if (a.testando && MIC_NOME) {
+    return "usando: " + MIC_NOME;
+  }
+  if (a.permissao === "ok") {
+    return "liberado";
+  }
+  if (a.permissao === "negada") {
+    return "bloqueado";
+  }
+  return "ainda não testado";
+}
+
+function desenharMedidor() {
+  var b = $("#medidorBarra");
+  if (b) {
+    b.style.width = Math.round(MIC_NIVEL * 100) + "%";
+  }
+}
+
+/** Atualiza botoes, textos e medidor sem refazer o HTML (igual ao atualizarDiscador). */
+function atualizarAudio() {
+  var bt = $("#btnTestarMic");
+  if (!bt) {
+    return;
+  }
+  var a = S.audio;
+  var emChamada = !!S.chamada;
+  var ocupado = a.gravando || a.ouvindo;
+  bt.textContent = a.testando || a.abrindo ? "Parar teste" : "Testar microfone";
+  bt.disabled = emChamada || ocupado;
+  var bg = $("#btnGravar");
+  bg.textContent = a.gravando ? "Gravando..." : a.ouvindo ? "Tocando..." : "Gravar 3 s e ouvir";
+  bg.disabled = emChamada || ocupado || a.abrindo;
+  $("#selMic").disabled = emChamada || a.gravando;
+  $("#audioEstado").textContent = rotuloEstadoMic();
+  var texto = a.msg || MSG_AUDIO_INICIAL;
+  if (!temMidia()) {
+    texto = MSG_SEM_MIDIA;
+  } else if (emChamada) {
+    texto = "Em chamada: o microfone só pode ser trocado antes de ligar.";
+  }
+  var m = $("#audioMsg");
+  if (m.textContent !== texto) {
+    m.textContent = texto;
+  }
+  desenharMedidor();
+}
+
+function listarDispositivos() {
+  if (!temMidia() || !navigator.mediaDevices.enumerateDevices) {
+    return Promise.resolve();
+  }
+  return navigator.mediaDevices.enumerateDevices().then(
+    function (lista) {
+      var ent = [];
+      var sai = [];
+      for (var i = 0; i < lista.length; i++) {
+        var d = lista[i];
+        if (!d.deviceId) {
+          continue; // sem permissao o navegador esconde id e nome
+        }
+        if (d.kind === "audioinput") {
+          ent.push({ id: d.deviceId, nome: d.label });
+        } else if (d.kind === "audiooutput") {
+          sai.push({ id: d.deviceId, nome: d.label });
+        }
+      }
+      var a = S.audio;
+      a.entradas = ent;
+      a.saidas = sai;
+      if (a.idMic && ent.length && !temDispositivo(ent, a.idMic)) {
+        a.idMic = "";
+        a.msg = "O microfone escolhido saiu da lista. Voltei para o padrão do sistema.";
+      }
+      if (a.idSaida && sai.length && !temDispositivo(sai, a.idSaida)) {
+        a.idSaida = "";
+        aplicarSaida(AUDIO);
+      }
+      renderAudio();
+    },
+    function () {}
+  );
+}
+
+function iniciarDispositivos() {
+  listarDispositivos();
+  if (temMidia() && navigator.mediaDevices.addEventListener) {
+    navigator.mediaDevices.addEventListener("devicechange", function () {
+      listarDispositivos();
+    });
+  }
+}
+
+/** Restricoes usadas no teste E na chamada: o que voce testou e o que a chamada usa. */
+function restricoesMic() {
+  var id = S.audio.idMic;
+  return { audio: id ? { deviceId: { exact: id } } : true, video: false };
+}
+
+function textoErroMic(e) {
+  var n = e && e.name;
+  if (n === "NotAllowedError" || n === "SecurityError" || n === "PermissionDeniedError") {
+    return "O navegador bloqueou o microfone. Clique no cadeado ao lado do endereço, libere o microfone e tente de novo.";
+  }
+  if (n === "NotFoundError" || n === "OverconstrainedError") {
+    return "Esse microfone não foi encontrado. Escolha outro na lista ou conecte o microfone.";
+  }
+  if (n === "NotReadableError" || n === "AbortError") {
+    return "Não consegui abrir o microfone: outro programa pode estar usando, ou o sistema o bloqueou.";
+  }
+  return "Não consegui abrir o microfone" + (e && e.message ? " (" + e.message + ")" : "") + ".";
+}
+
+function fecharFluxo(fluxo) {
+  var trilhas = fluxo && fluxo.getTracks ? fluxo.getTracks() : [];
+  for (var i = 0; i < trilhas.length; i++) {
+    trilhas[i].onended = null;
+    trilhas[i].stop();
+  }
+}
+
+function aplicarSaida(el) {
+  if (!el || typeof el.setSinkId !== "function") {
+    return Promise.resolve();
+  }
+  var p = el.setSinkId(S.audio.idSaida || "");
+  if (!p || !p.catch) {
+    return Promise.resolve();
+  }
+  return p.catch(function () {
+    toast("Não consegui usar essa saída de som");
+  });
+}
+
+/** Liga o medidor de nivel. Devolve false se o navegador nao tem Web Audio (o gravar e ouvir ainda funciona). */
+function abrirMedidor(fluxo) {
+  var Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) {
+    return false;
+  }
+  try {
+    MIC_CTX = new Ctx();
+    if (MIC_CTX.state === "suspended") {
+      MIC_CTX.resume();
+    }
+    var fonte = MIC_CTX.createMediaStreamSource(fluxo);
+    MIC_ANALISADOR = MIC_CTX.createAnalyser();
+    MIC_ANALISADOR.fftSize = 1024;
+    // Sem ligar na saida de som: so mede, nao devolve a sua voz no alto-falante.
+    fonte.connect(MIC_ANALISADOR);
+    MIC_BUFFER = new Uint8Array(MIC_ANALISADOR.fftSize);
+    MIC_INICIO = Date.now();
+    MIC_PICO = 0;
+    MIC_NIVEL = 0;
+    TIMER_MEDIDOR = setInterval(medirMic, 100);
+    return true;
+  } catch (e) {
+    MIC_ANALISADOR = null;
+    return false;
+  }
+}
+
+function textoDoTeste() {
+  if (MIC_PICO >= MIC_VOZ) {
+    return "Está captando a sua voz. Esse microfone funciona.";
+  }
+  if (Date.now() - MIC_INICIO < 4000) {
+    return "";
+  }
+  if (MIC_PICO < MIC_MUDO) {
+    return "Sem sinal nenhum. Esse microfone não está captando: troque na lista ou confira se ele está mudo no sistema.";
+  }
+  return "Sinal muito fraco. Chegue mais perto ou aumente o volume de entrada nas configurações de som.";
+}
+
+function medirMic() {
+  if (!MIC_ANALISADOR) {
+    return;
+  }
+  MIC_ANALISADOR.getByteTimeDomainData(MIC_BUFFER);
+  var soma = 0;
+  for (var i = 0; i < MIC_BUFFER.length; i++) {
+    var v = (MIC_BUFFER[i] - 128) / 128;
+    soma += v * v;
+  }
+  var rms = Math.sqrt(soma / MIC_BUFFER.length);
+  if (rms > MIC_PICO) {
+    MIC_PICO = rms;
+  }
+  var a = S.audio;
+  if (a.gravando && rms > MIC_PICO_GRAVACAO) {
+    MIC_PICO_GRAVACAO = rms;
+  }
+  // Escala em decibeis: -60 dB (silencio) a -15 dB (voz alta) vira 0 a 100% da barra.
+  var db = (20 * Math.log(Math.max(rms, 0.00001))) / Math.LN10;
+  var alvo = Math.min(1, Math.max(0, (db + 60) / 45));
+  MIC_NIVEL = Math.max(alvo, MIC_NIVEL * 0.85);
+  desenharMedidor();
+  if (a.gravando || a.ouvindo) {
+    return;
+  }
+  var texto = textoDoTeste();
+  if (texto && texto !== a.msg) {
+    a.msg = texto;
+    atualizarAudio();
+  }
+}
+
+function cancelarGravacao() {
+  clearTimeout(TIMER_GRAVACAO);
+  TIMER_GRAVACAO = 0;
+  if (GRAVADOR) {
+    var gr = GRAVADOR;
+    GRAVADOR = null;
+    gr.onstop = null;
+    gr.ondataavailable = null;
+    try {
+      gr.stop();
+    } catch (e) {}
+  }
+  S.audio.gravando = false;
+}
+
+function pararReproducao() {
+  var r = REPRODUCAO;
+  REPRODUCAO = null;
+  S.audio.ouvindo = false;
+  if (!r) {
+    return;
+  }
+  r.el.onended = null;
+  r.el.onerror = null;
+  try {
+    r.el.pause();
+  } catch (e) {}
+  if (window.URL && URL.revokeObjectURL) {
+    URL.revokeObjectURL(r.url);
+  }
+}
+
+/** Para tudo (medidor, gravacao, reproducao) e solta o microfone. Se vier texto, ele vira a mensagem do cartao. */
+function pararTesteMic(msg) {
+  var a = S.audio;
+  MIC_GERACAO++;
+  cancelarGravacao();
+  pararReproducao();
+  clearInterval(TIMER_MEDIDOR);
+  TIMER_MEDIDOR = 0;
+  clearTimeout(TIMER_MIC);
+  TIMER_MIC = 0;
+  if (MIC_STREAM) {
+    fecharFluxo(MIC_STREAM);
+    MIC_STREAM = null;
+  }
+  if (MIC_CTX) {
+    try {
+      var p = MIC_CTX.close();
+      if (p && p.catch) {
+        p.catch(function () {});
+      }
+    } catch (e) {}
+    MIC_CTX = null;
+  }
+  MIC_ANALISADOR = null;
+  MIC_NIVEL = 0;
+  MIC_NOME = "";
+  a.testando = false;
+  a.abrindo = false;
+  if (msg !== undefined) {
+    a.msg = msg;
+  }
+  atualizarAudio();
+}
+
+/** Abre o microfone escolhido e liga o medidor. Resolve com o fluxo; em erro a mensagem do cartao ja foi escrita. */
+function iniciarTesteMic() {
+  var a = S.audio;
+  if (MIC_STREAM) {
+    return Promise.resolve(MIC_STREAM);
+  }
+  if (a.abrindo) {
+    return Promise.reject(new Error("abrindo"));
+  }
+  if (!temMidia()) {
+    a.msg = MSG_SEM_MIDIA;
+    atualizarAudio();
+    return Promise.reject(new Error("sem midia"));
+  }
+  var geracao = ++MIC_GERACAO;
+  a.abrindo = true;
+  a.msg = "Permita o microfone no aviso do navegador...";
+  atualizarAudio();
+  return navigator.mediaDevices.getUserMedia(restricoesMic()).then(
+    function (fluxo) {
+      if (geracao !== MIC_GERACAO) {
+        fecharFluxo(fluxo); // a pessoa parou o teste enquanto o aviso de permissao estava aberto
+        throw new Error("cancelado");
+      }
+      a.abrindo = false;
+      a.permissao = "ok";
+      MIC_STREAM = fluxo;
+      var trilha = fluxo.getAudioTracks ? fluxo.getAudioTracks()[0] : null;
+      MIC_NOME = trilha && trilha.label ? trilha.label : "";
+      if (trilha) {
+        trilha.onended = function () {
+          if (MIC_STREAM === fluxo) {
+            pararTesteMic("O microfone foi desconectado.");
+          }
+        };
+      }
+      a.testando = true;
+      a.msg = abrirMedidor(fluxo)
+        ? "Fale algo: a barra verde precisa mexer."
+        : "Este navegador não mostra o medidor. Use Gravar 3 s e ouvir.";
+      TIMER_MIC = setTimeout(function () {
+        pararTesteMic("Teste encerrado. Clique em Testar microfone para repetir.");
+      }, MIC_TESTE_MAX_MS);
+      listarDispositivos(); // agora com permissao: nomes aparecem
+      atualizarAudio();
+      return fluxo;
+    },
+    function (e) {
+      if (geracao === MIC_GERACAO) {
+        a.abrindo = false;
+        a.testando = false;
+        a.msg = textoErroMic(e);
+        if (e && (e.name === "NotAllowedError" || e.name === "SecurityError" || e.name === "PermissionDeniedError")) {
+          a.permissao = "negada";
+        }
+        if (e && (e.name === "NotFoundError" || e.name === "OverconstrainedError") && a.idMic) {
+          a.idMic = "";
+          a.msg = "Esse microfone não foi encontrado. Voltei para o padrão do sistema: clique em Testar microfone de novo.";
+          renderAudio();
+        }
+        atualizarAudio();
+      }
+      throw e;
+    }
+  );
+}
+
+function alternarTesteMic() {
+  var a = S.audio;
+  if (S.chamada || a.gravando || a.ouvindo) {
+    return;
+  }
+  if (a.testando || a.abrindo) {
+    pararTesteMic("Teste encerrado.");
+  } else {
+    iniciarTesteMic().catch(function () {});
+  }
+}
+
+function reproduzir(blob, pico) {
+  var a = S.audio;
+  if (pico >= 0 && pico < MIC_MUDO) {
+    a.msg = "A gravação saiu muda. Esse microfone não está captando: troque na lista ou confira se ele está mudo no sistema.";
+    atualizarAudio();
+    return;
+  }
+  if (!window.URL || !URL.createObjectURL || typeof Audio === "undefined") {
+    a.msg = "Gravei, mas este navegador não toca a gravação.";
+    atualizarAudio();
+    return;
+  }
+  var url = URL.createObjectURL(blob);
+  var el = new Audio(url);
+  function falhou() {
+    if (REPRODUCAO && REPRODUCAO.el === el) {
+      pararReproducao();
+      a.msg = "O navegador não deixou tocar a gravação. Clique em Gravar de novo.";
+      atualizarAudio();
+    }
+  }
+  el.onended = function () {
+    if (REPRODUCAO && REPRODUCAO.el === el) {
+      pararReproducao();
+      a.msg = "Terminou. Se você ouviu a sua voz, o microfone e a saída de som estão certos.";
+      atualizarAudio();
+    }
+  };
+  el.onerror = falhou;
+  REPRODUCAO = { el: el, url: url };
+  a.ouvindo = true;
+  a.msg = "Tocando o que foi gravado...";
+  atualizarAudio();
+  aplicarSaida(el)
+    .then(function () {
+      var p = el.play();
+      return p && p.then ? p : undefined;
+    })
+    .catch(falhou);
+}
+
+function gravarEOuvir() {
+  var a = S.audio;
+  if (S.chamada || a.gravando || a.ouvindo || a.abrindo) {
+    return;
+  }
+  if (typeof MediaRecorder === "undefined") {
+    a.msg = "Este navegador não grava o áudio de teste. Use o medidor (Testar microfone).";
+    atualizarAudio();
+    return;
+  }
+  var tinhaTeste = a.testando;
+  iniciarTesteMic()
+    .then(function (fluxo) {
+      var pedacos = [];
+      var gr;
+      function falha() {
+        cancelarGravacao();
+        a.msg = "Não consegui gravar neste navegador. Use o medidor (Testar microfone).";
+        if (!tinhaTeste) {
+          pararTesteMic();
+        }
+        atualizarAudio();
+      }
+      try {
+        gr = new MediaRecorder(fluxo);
+        gr.ondataavailable = function (ev) {
+          if (ev.data && ev.data.size) {
+            pedacos.push(ev.data);
+          }
+        };
+        gr.onstop = function () {
+          if (GRAVADOR !== gr) {
+            return;
+          }
+          GRAVADOR = null;
+          clearTimeout(TIMER_GRAVACAO);
+          TIMER_GRAVACAO = 0;
+          a.gravando = false;
+          var pico = MIC_ANALISADOR ? MIC_PICO_GRAVACAO : -1;
+          if (!tinhaTeste) {
+            pararTesteMic();
+          }
+          reproduzir(new Blob(pedacos, { type: gr.mimeType || "audio/webm" }), pico);
+        };
+        GRAVADOR = gr;
+        MIC_PICO_GRAVACAO = 0;
+        a.gravando = true;
+        a.msg = "Gravando 3 segundos. Fale agora...";
+        gr.start();
+        TIMER_GRAVACAO = setTimeout(function () {
+          if (GRAVADOR === gr) {
+            try {
+              gr.stop();
+            } catch (e) {
+              falha();
+            }
+          }
+        }, 3000);
+      } catch (e) {
+        falha();
+        return;
+      }
+      atualizarAudio();
+    })
+    .catch(function () {});
+}
+
+function escolherMic(id) {
+  var a = S.audio;
+  a.idMic = id || "";
+  if (a.testando || a.abrindo) {
+    pararTesteMic();
+    iniciarTesteMic().catch(function () {});
+  } else {
+    a.msg = "Microfone escolhido. Clique em Testar microfone para conferir.";
+    atualizarAudio();
+  }
+}
+
+function escolherSaida(id) {
+  S.audio.idSaida = id || "";
+  aplicarSaida(AUDIO);
+  S.audio.msg = "Saída escolhida. Use Gravar 3 s e ouvir para conferir.";
+  atualizarAudio();
+}
+
+/* --- diagnostico do audio durante a chamada (RTCPeerConnection.getStats) --- */
+
+function pararDiagnostico() {
+  clearInterval(TIMER_DIAGNOSTICO);
+  TIMER_DIAGNOSTICO = 0;
+  DIAG = null;
+}
+
+function iniciarDiagnostico() {
+  pararDiagnostico();
+  if (!S.config || S.config.mock) {
+    return;
+  }
+  DIAG = { env: -1, rec: -1, semEnv: 0, semRec: 0, pico: -1, n: 0 };
+  TIMER_DIAGNOSTICO = setInterval(medirAudioChamada, 1000);
+}
+
+function textoDiagnostico(d) {
+  if (d.n < 4) {
+    return "Áudio: verificando...";
+  }
+  if (d.semEnv >= 3) {
+    return "Áudio: o navegador não está enviando som. Confira o microfone no cartão Áudio.";
+  }
+  if (d.semRec >= 4) {
+    return "Áudio: nada chega do Asterisk (rede, ICE ou DTLS). Não é o microfone.";
+  }
+  if (AUDIO && AUDIO.srcObject && AUDIO.paused) {
+    return "Áudio: o som chegou, mas o navegador não está tocando. Clique na página.";
+  }
+  if (d.n >= 6 && d.pico >= 0 && d.pico < 0.005) {
+    return "Áudio: o som trafega, mas o microfone não captou nada até agora. Fale algo; se continuar assim, troque de microfone.";
+  }
+  return "Áudio: trafegando nos dois sentidos.";
+}
+
+function escreverDiagnostico(c, texto) {
+  if (c.audioMsg === texto) {
+    return;
+  }
+  c.audioMsg = texto;
+  var el = $("#chAudio");
+  if (el) {
+    el.textContent = texto;
+  }
+}
+
+function medirAudioChamada() {
+  var c = S.chamada;
+  var d = DIAG;
+  var pc = SESSAO && SESSAO.connection;
+  if (!c || !d || c.estado !== "atendida" || !pc || typeof pc.getStats !== "function") {
+    return;
+  }
+  pc.getStats().then(
+    function (rel) {
+      if (S.chamada !== c || DIAG !== d) {
+        return;
+      }
+      var env = -1;
+      var rec = -1;
+      var nivel = -1;
+      rel.forEach(function (r) {
+        if ((r.kind || r.mediaType) !== "audio") {
+          return;
+        }
+        if (r.type === "outbound-rtp" && typeof r.packetsSent === "number") {
+          env = r.packetsSent;
+        } else if (r.type === "inbound-rtp" && typeof r.packetsReceived === "number") {
+          rec = r.packetsReceived;
+        } else if (r.type === "media-source" && typeof r.audioLevel === "number") {
+          nivel = r.audioLevel;
+        }
+      });
+      d.n++;
+      if (env > d.env) {
+        d.env = env;
+        d.semEnv = 0;
+      } else {
+        d.semEnv++;
+      }
+      if (rec > d.rec) {
+        d.rec = rec;
+        d.semRec = 0;
+      } else {
+        d.semRec++;
+      }
+      if (nivel > d.pico) {
+        d.pico = nivel;
+      }
+      escreverDiagnostico(c, textoDiagnostico(d));
+    },
+    function () {}
+  );
+}
+
+/* ===== 8c. Conectar celular (QR para o app Voice SIP Agent) ===== */
+
+// O QR leva o JSON de configuracao que o app sabe importar. Ele e montado aqui no navegador com o que o
+// servidor entrega em /api/celular (so ao proprio PC) e nao e gravado em lugar nenhum.
+var QR_VISIVEL_MS = 120000;
+var CEL_CONSULTA_MS = 5000;
+var TIMER_CEL_CONSULTA = 0;
+var TIMER_CEL_QR = 0;
+var TIMER_CEL_LIMPAR = 0;
+S.celular = null; // { carregando, erro, dados, ip, outro, qrVisivel, viuOffline }
+
+function ipValido(ip) {
+  var m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(String(ip || "").trim());
+  if (!m) {
+    return false;
+  }
+  for (var i = 1; i <= 4; i++) {
+    if (Number(m[i]) > 255) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function celularConectado() {
+  var e = S.estado;
+  return !!(e && e.ari && e.ari.ok && e.gateway && e.gateway.estado === "online");
+}
+
+/** O JSON que o app importa (formato voice-sip-agent-config v1). So as chaves que a Central conhece. */
+function jsonCelular() {
+  var c = S.celular;
+  var d = c && c.dados;
+  if (!d) {
+    return "";
+  }
+  return JSON.stringify({
+    format: "voice-sip-agent-config",
+    version: 1,
+    sip: { server: String(c.ip).trim(), port: d.porta, transport: "udp", srtp: "off", domain: "", user: d.usuario, password: d.senha },
+    routing: { target: d.usuario }
+  });
+}
+
+/** Desenha o QR como SVG (um unico path). As cores vem do CSS, por token. */
+function svgQr(texto) {
+  var q = qrcode(0, "M");
+  q.addData(texto);
+  q.make();
+  var n = q.getModuleCount();
+  var margem = 4;
+  var d = "";
+  for (var r = 0; r < n; r++) {
+    for (var col = 0; col < n; col++) {
+      if (q.isDark(r, col)) {
+        d += "M" + (col + margem) + " " + (r + margem) + "h1v1h-1z";
+      }
+    }
+  }
+  var lado = n + 2 * margem;
+  return (
+    '<svg class="ch-qr-svg" viewBox="0 0 ' + lado + " " + lado + '" role="img"' +
+    ' aria-label="QR code com as configurações do celular" shape-rendering="crispEdges"><path d="' + d + '"></path></svg>'
+  );
+}
+
+function avisoCelular(titulo, dica) {
+  return '<p class="ch-cel-aviso"><strong>' + esc(titulo) + "</strong>" + (dica ? "<br>" + esc(dica) : "") + "</p>";
+}
+
+function renderCelEstado() {
+  var el = $("#chCelEstado");
+  if (!el) {
+    return;
+  }
+  var e = S.estado;
+  var nivel = "espera";
+  var titulo = "Consultando";
+  var texto = "Perguntando ao Asterisk...";
+  if (celularConectado()) {
+    nivel = "ok";
+    titulo = "Celular conectado";
+    texto = "O Asterisk já vê o celular registrado.";
+  } else if (e && e.ari && !e.ari.ok) {
+    nivel = "aviso";
+    titulo = "Sem resposta do Asterisk";
+    texto = e.ari.erro || "";
+  } else if (e) {
+    titulo = "Aguardando o celular";
+    texto = "Escaneie o QR no app. Esta tela avisa quando ele registrar.";
+  }
+  el.innerHTML =
+    '<span class="ch-ponto ch-n-' + nivel + '"></span>' +
+    '<div class="ch-linha-txt"><strong>' + esc(titulo) + "</strong><span>" + esc(texto) + "</span></div>";
+}
+
+function renderCelQr() {
+  var el = $("#chCelQr");
+  var c = S.celular;
+  if (!el || !c) {
+    return;
+  }
+  if (c.carregando) {
+    el.innerHTML = '<p class="ch-dica">Carregando as configurações...</p>';
+    return;
+  }
+  if (c.erro) {
+    el.innerHTML = avisoCelular(c.erro.message, c.erro.dica);
+    return;
+  }
+  if (!ipValido(c.ip)) {
+    el.innerHTML = avisoCelular("Informe o IP deste computador na rede", "Algo como 192.168.0.10. No terminal: hostname -I");
+    return;
+  }
+  var h;
+  if (!c.qrVisivel) {
+    h = '<p class="ch-dica">QR escondido por segurança.</p>';
+  } else if (typeof qrcode === "undefined") {
+    h = avisoCelular("A biblioteca de QR não carregou", "Falta o arquivo vendor/qrcode.js.");
+  } else {
+    var json = jsonCelular();
+    if (!/^[\x20-\x7e]+$/.test(json)) {
+      h = avisoCelular("A senha tem caractere fora do ASCII", "O QR não leva acentos. Rode de novo o instalar.sh para gerar uma senha nova.");
+    } else {
+      try {
+        h = '<div class="ch-qr">' + svgQr(json) + "</div>";
+      } catch (err) {
+        h = avisoCelular("Não consegui gerar o QR", err.message);
+      }
+    }
+  }
+  el.innerHTML =
+    '<div class="ch-qr-caixa">' + h +
+    '<button class="btn btn-suave" data-acao="celular-qr">' + (c.qrVisivel ? "Esconder QR" : "Mostrar QR") + "</button></div>";
+}
+
+function renderCelIp() {
+  var el = $("#chCelIp");
+  var c = S.celular;
+  if (!el) {
+    return;
+  }
+  if (!c || !c.dados) {
+    el.innerHTML = "";
+    return;
+  }
+  var ips = c.dados.ips || [];
+  var h = '<div class="ch-cel-ip"><label class="ch-audio-rot" for="selCelularIp">IP deste computador na rede</label>';
+  if (ips.length) {
+    h += '<select id="selCelularIp" class="ch-select">';
+    for (var i = 0; i < ips.length; i++) {
+      var sel = !c.outro && c.ip === ips[i].ip ? " selected" : "";
+      h += '<option value="' + esc(ips[i].ip) + '"' + sel + ">" + esc(ips[i].ip + " (" + ips[i].interface + ")") + "</option>";
+    }
+    h += '<option value="__outro"' + (c.outro ? " selected" : "") + ">Digitar outro IP...</option></select>";
+  }
+  if (c.outro || !ips.length) {
+    h +=
+      '<input id="campoCelularIp" class="ch-cel-campo" type="text" inputmode="decimal" autocomplete="off"' +
+      ' placeholder="192.168.0.10" aria-label="IP deste computador" value="' + esc(c.ip) + '">';
+  }
+  el.innerHTML = h + "</div>";
+}
+
+function htmlCelular() {
+  return (
+    '<div class="ch-celular">' +
+    '<div class="ch-linha ch-cel-estado" id="chCelEstado"></div>' +
+    '<ol class="ch-cel-passos">' +
+    "<li>Instale o app e inicie o Shizuku (Etapa 6 do PASSO-A-PASSO).</li>" +
+    "<li>No app, role até <strong>Scan QR code</strong> e toque nele.</li>" +
+    "<li>Aponte a câmera para o QR abaixo, confira as mudanças e toque em <strong>Import</strong>.</li>" +
+    "<li>Ligue <strong>Take over calls</strong> no app.</li>" +
+    "</ol>" +
+    '<div id="chCelQr"></div>' +
+    '<div id="chCelIp"></div>' +
+    '<p class="ch-dica">Celular e computador na mesma rede Wi-Fi. O QR contém a senha do celular: não mostre a ninguém nem tire foto. Ele se esconde sozinho em 2 minutos.</p>' +
+    "</div>"
+  );
+}
+
+function agendarQr() {
+  clearTimeout(TIMER_CEL_QR);
+  TIMER_CEL_QR = setTimeout(function () {
+    var c = S.celular;
+    if (c && c.qrVisivel) {
+      c.qrVisivel = false;
+      renderCelQr();
+    }
+  }, QR_VISIVEL_MS);
+}
+
+/** Pergunta o estado ao Asterisk enquanto o painel esta aberto, para avisar quando o celular registrar. */
+function consultarCelular() {
+  var meu = S.celular;
+  if (!meu) {
+    return;
+  }
+  if (!$("#chCelEstado")) {
+    pararCelular();
+    return;
+  }
+  if (document.hidden) {
+    return;
+  }
+  carregarEstado().then(function () {
+    if (S.celular !== meu) {
+      return;
+    }
+    var e = S.estado;
+    var on = celularConectado();
+    if (!on && e && e.ari && e.ari.ok) {
+      meu.viuOffline = true;
+    }
+    if (on && meu.viuOffline) {
+      meu.viuOffline = false;
+      meu.qrVisivel = false;
+      clearTimeout(TIMER_CEL_QR);
+      toast("Celular conectado");
+      renderCelQr();
+    }
+    renderCelEstado();
+    render();
+  });
+}
+
+function abrirCelular() {
+  pararCelular();
+  var meu = { carregando: true, erro: null, dados: null, ip: "", outro: false, qrVisivel: true, viuOffline: false };
+  var e0 = S.estado;
+  meu.viuOffline = !!(e0 && e0.ari && e0.ari.ok && !celularConectado());
+  S.celular = meu;
+  abrirSheet("Conectar celular", htmlCelular());
+  renderCelEstado();
+  renderCelIp();
+  renderCelQr();
+  api("/api/celular")
+    .then(function (d) {
+      exigirOk(d);
+      if (S.celular !== meu) {
+        return;
+      }
+      meu.dados = d;
+      var ips = d.ips || [];
+      meu.ip = ips.length ? ips[0].ip : "";
+      meu.outro = !ips.length;
+      agendarQr();
+    })
+    .catch(function (e) {
+      if (S.celular === meu) {
+        meu.erro = e;
+      }
+    })
+    .then(function () {
+      if (S.celular !== meu) {
+        return;
+      }
+      meu.carregando = false;
+      renderCelIp();
+      renderCelQr();
+    });
+  TIMER_CEL_CONSULTA = setInterval(consultarCelular, CEL_CONSULTA_MS);
+  consultarCelular();
+}
+
+/** Chamado ao fechar o painel: para a consulta e tira a senha da tela e da memoria. */
+function pararCelular() {
+  clearInterval(TIMER_CEL_CONSULTA);
+  TIMER_CEL_CONSULTA = 0;
+  clearTimeout(TIMER_CEL_QR);
+  TIMER_CEL_QR = 0;
+  if (!S.celular) {
+    return;
+  }
+  S.celular = null;
+  // Espera o painel terminar de descer para nao piscar; se outro conteudo abriu nesse meio tempo, nao mexe.
+  clearTimeout(TIMER_CEL_LIMPAR);
+  TIMER_CEL_LIMPAR = setTimeout(function () {
+    if (!S.celular && !$("#sheet").classList.contains("aberto")) {
+      $("#sheetCorpo").innerHTML = "";
+    }
+  }, 400);
+}
+
+function alternarQrCelular() {
+  var c = S.celular;
+  if (!c) {
+    return;
+  }
+  c.qrVisivel = !c.qrVisivel;
+  if (c.qrVisivel) {
+    agendarQr();
+  } else {
+    clearTimeout(TIMER_CEL_QR);
+  }
+  renderCelQr();
+}
+
+function escolherIpCelular(valor) {
+  var c = S.celular;
+  if (!c) {
+    return;
+  }
+  c.outro = valor === "__outro";
+  c.ip = c.outro ? "" : valor;
+  renderCelIp();
+  renderCelQr();
+}
+
+/** So redesenha o QR: o campo de texto continua o mesmo, entao o teclado nao fecha. */
+function digitarIpCelular(valor) {
+  var c = S.celular;
+  if (!c) {
+    return;
+  }
+  c.ip = valor;
+  renderCelQr();
 }
 
 /* ===== 9. Carregamento ===== */
@@ -1280,6 +2276,14 @@ function acao(nome, alvo) {
     fecharSheet();
     mudarAba("discar");
     toast("Número no discador");
+  } else if (nome === "testar-mic") {
+    alternarTesteMic();
+  } else if (nome === "gravar-teste") {
+    gravarEOuvir();
+  } else if (nome === "conectar-celular") {
+    abrirCelular();
+  } else if (nome === "celular-qr") {
+    alternarQrCelular();
   } else if (nome === "simular") {
     mockChegou();
   } else if (nome === "recarregar") {
@@ -1315,6 +2319,19 @@ document.addEventListener("input", function (ev) {
   } else if (t && t.id === "campoBusca") {
     S.busca = t.value;
     render();
+  } else if (t && t.id === "campoCelularIp") {
+    digitarIpCelular(t.value);
+  }
+});
+
+document.addEventListener("change", function (ev) {
+  var t = ev.target;
+  if (t && t.id === "selMic") {
+    escolherMic(t.value);
+  } else if (t && t.id === "selSaida") {
+    escolherSaida(t.value);
+  } else if (t && t.id === "selCelularIp") {
+    escolherIpCelular(t.value);
   }
 });
 
@@ -1342,4 +2359,5 @@ window.addEventListener("pagehide", function () {
 });
 
 AUDIO = $("#audioRemoto");
+iniciarDispositivos();
 carregar();

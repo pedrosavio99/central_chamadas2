@@ -42,11 +42,13 @@ ligação).
 | `PASSO-A-PASSO.md` | O guia completo da v1 |
 | `modulos/central/` | O módulo (servidor, tela, modelos do Asterisk, instalador) |
 | `.github/workflows/gerar-apk.yml` | Compila o app do celular (Voice SIP Agent) no GitHub Actions |
+| `apk/` | `qr-scan.patch`: acrescenta o botão **Scan QR code** ao app; o workflow aplica antes de compilar |
 | `src/`, `api/`, `public/`, `vercel.json` | O host (Express, página inicial) |
 
 ## Créditos e licenças
 
 - App do celular: [sparkcyf/android-voice-sip-agent](https://github.com/sparkcyf/android-voice-sip-agent)
-  (GPL-2.0). O workflow só compila o código dele; nada dele é copiado para este repositório.
-- JsSIP 3.13.9 (MIT), em `modulos/central/publico/vendor/`.
+  (GPL-2.0). O workflow compila o código dele e aplica `apk/qr-scan.patch`, uma alteração pequena (obra derivada,
+  também GPL-2.0). O resto do app não é copiado para este repositório.
+- JsSIP 3.13.9 (MIT) e qrcode-generator 2.0.4 (MIT), em `modulos/central/publico/vendor/`.
 - Asterisk, Shizuku: instalados a partir das fontes oficiais deles.

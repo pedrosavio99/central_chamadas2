@@ -1,0 +1,96 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 974a142..4b17c6e 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -72,6 +72,7 @@ dependencies {
+     implementation(libs.androidx.compose.ui)
+     implementation(libs.androidx.compose.material3)
+     implementation(libs.kotlinx.coroutines.android)
++    implementation(libs.mlkit.code.scanner)
+     testImplementation(libs.junit)
+     testImplementation(libs.mockito.core)
+     testImplementation(libs.android.json)
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 57f62a1..11607c7 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -90,5 +90,10 @@
+         <meta-data
+             android:name="moe.shizuku.client.V3_SUPPORT"
+             android:value="true" />
++
++        <!-- Pede ao Google Play services o modulo do leitor de QR junto com a instalacao. -->
++        <meta-data
++            android:name="com.google.mlkit.vision.DEPENDENCIES"
++            android:value="barcode_ui" />
+     </application>
+ </manifest>
+diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/MainActivity.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/MainActivity.kt
+index 5a13236..c6ff2e3 100644
+--- a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/MainActivity.kt
++++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/MainActivity.kt
+@@ -56,6 +56,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
+ import androidx.compose.ui.unit.dp
+ import androidx.compose.ui.unit.sp
+ import androidx.lifecycle.ViewModelProvider
++import com.google.mlkit.vision.barcode.common.Barcode
++import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
++import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+ import io.github.sparkcyf.voicesipagent.pjsua2.SipTransport
+ import io.github.sparkcyf.voicesipagent.pjsua2.SrtpPolicy
+ import io.github.sparkcyf.voicesipagent.privileged.HealthKeys
+@@ -387,6 +390,12 @@ private fun ConfigFileSection(rt: GatewayRuntime) {
+             }, { message = "Import failed: ${it.message ?: it.javaClass.simpleName}" })
+         }
+     }
++    val scanner = remember(context) {
++        GmsBarcodeScanning.getClient(
++            context,
++            GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).enableAutoZoom().build(),
++        )
++    }
+     preview?.let { (import, changes) ->
+         AlertDialog(
+             onDismissRequest = { preview = null },
+@@ -412,7 +421,20 @@ private fun ConfigFileSection(rt: GatewayRuntime) {
+     Section("Configuration file") {
+         Text("Export saves every setting except the takeover switch as JSON, including the SIP password in plain text. " +
+             "Import changes only the settings present in the file.", style = MaterialTheme.typography.bodySmall)
++        Text("Scan QR code reads the same settings from a QR code (for example the one the Central shows) " +
++            "and asks for confirmation before changing anything.", style = MaterialTheme.typography.bodySmall)
+         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
++            OutlinedButton(onClick = {
++                scanner.startScan()
++                    .addOnSuccessListener { code ->
++                        runCatching { ConfigFile.parse(code.rawValue.orEmpty()) }.fold({ import ->
++                            val current = rt.savedSettings()
++                            val changes = ConfigFile.changes(current, import.applyTo(current))
++                            if (changes.isEmpty()) message = "The QR code matches the current settings." else preview = import to changes
++                        }, { message = "QR code not accepted: ${it.message ?: it.javaClass.simpleName}" })
++                    }
++                    .addOnFailureListener { message = "Scan failed: ${it.message ?: it.javaClass.simpleName}" }
++            }) { Text("Scan QR code") }
+             OutlinedButton(onClick = { exporter.launch(ConfigFile.DEFAULT_NAME) }) { Text("Export to file") }
+             OutlinedButton(onClick = { importer.launch(arrayOf("application/json", "text/*", "application/octet-stream")) }) {
+                 Text("Import from file")
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index 745ecae..4cea406 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -9,6 +9,7 @@ shizuku = "13.1.5"
+ junit = "4.13.2"
+ mockito = "5.24.0"
+ androidJson = "0.0.20131108.vaadin1"
++codeScanner = "16.1.0"
+ 
+ [libraries]
+ kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+@@ -25,6 +26,8 @@ junit = { group = "junit", name = "junit", version.ref = "junit" }
+ mockito-core = { group = "org.mockito", name = "mockito-core", version.ref = "mockito" }
+ # Android's own org.json implementation, for JVM tests (android.jar only has stubs).
+ android-json = { group = "com.vaadin.external.google", name = "android-json", version.ref = "androidJson" }
++# Google code scanner: a leitura do QR roda dentro do Google Play services e nao pede permissao de camera.
++mlkit-code-scanner = { group = "com.google.android.gms", name = "play-services-code-scanner", version.ref = "codeScanner" }
+ 
+ [plugins]
+ android-application = { id = "com.android.application", version.ref = "agp" }

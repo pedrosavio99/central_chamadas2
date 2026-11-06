@@ -29,6 +29,10 @@
   --aviso-fundo: rgba(255, 149, 0, 0.14);
   --sombra: 0 1px 2px rgba(0, 0, 0, 0.06), 0 4px 16px rgba(0, 0, 0, 0.06);
   --cortina-cor: rgba(0, 0, 0, 0.4);
+  /* QR code: modulos escuros sobre fundo claro nos DOIS temas (leitor de QR nao le ao contrario).
+     Por serem iguais nos dois temas, o tema escuro nao precisa redefinir estes dois. */
+  --qr-fundo: #ffffff;
+  --qr-modulo: #000000;
   --raio-cartao: 14px;
   --raio-grande: 22px;
   --raio-pilula: 999px;
