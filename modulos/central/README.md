@@ -13,8 +13,9 @@ Navegador (JsSIP, WebSocket + WebRTC) <-> Asterisk <-> UDP na rede local <-> Cel
 - **Uma chamada por vez.** O celular tem uma linha só. Uma segunda chamada que chega leva "ocupado".
 - **Sem tom de chamada.** O app do celular não repassa o som de "chamando" (sem early media). A tela mostra
   "Chamando..." e o áudio só começa quando o outro lado atende.
-- **O celular precisa estar ligado, na mesma rede Wi-Fi do PC, com o Shizuku rodando.** Depois de reiniciar o
-  celular, o Shizuku precisa ser iniciado de novo, à mão.
+- **O celular precisa estar ligado, na mesma rede Wi-Fi do PC e com a Depuração sem fio ligada.** O app se
+  pareia uma vez (você digita um código de 6 dígitos numa notificação) e depois se reconecta sozinho, também
+  depois de reiniciar o celular. Não há Shizuku.
 - **Enquanto "Take over calls" estiver ligado no app, as ligações recebidas no chip tocam no navegador e não
   no celular.**
 - **Sem login.** O servidor escuta em `0.0.0.0` (contrato do `AGENTS.md`). Quem alcança a porta 3333 pela rede
@@ -47,6 +48,7 @@ projeto/
 │   └── app.js
 ├── .github/workflows/gerar-apk.yml # compila o app do celular (não faz parte do módulo)
 ├── apk/qr-scan.patch               # botão Scan QR code do app (o workflow aplica)
+├── apk/sem-shizuku.patch           # pareamento e helper próprios do app, sem Shizuku (o workflow aplica)
 ├── modulos/central/
 │   ├── servidor/
 │   │   ├── index.js                # router Express: HTML, estáticos e /api
@@ -77,6 +79,8 @@ Prefixo `/central`. Respostas em JSON, sempre com `Cache-Control: no-store`.
 | `GET /central/api/health` | `{ok, modulo, versao, mock, somenteLeitura}` | Sem credencial. Serve para saber se o módulo está montado |
 | `GET /central/api/config` | Dados do ramal para o JsSIP (`wsUrl`, `ramal`, `senha`...) | Exige senhas no `.env`. Só responde ao próprio PC e a Origin local (ver Segurança) |
 | `GET /central/api/celular` | Ingredientes do QR de "Conectar celular": `ips` (IPv4 de rede local do PC), `porta`, `usuario`, `senha` (a `GW_SENHA`) | Exige `GW_SENHA` no `.env` (senão 409 com a dica). Mesmas travas do `/api/config`: só o próprio PC e Origin local |
+| `GET /central/api/apk` | O APK que a Central serve (`apk`: `nome`, `tamanho`, `sha256`, ou `null` se a pasta está vazia) e os `ips` do PC | Só o próprio PC e Origin local, como o `/api/config` |
+| `GET /central/apk/<arquivo>.apk` | Download do APK (é o celular que baixa) | Sem trava de "só o PC". Entrega só o `.apk` que a pasta `modulos/central/apk-celular/` tem agora (o mais novo, nome simples) |
 | `GET /central/api/estado` | Celular e ramal vistos pelo Asterisk (via ARI) | Cache de `CACHE_TTL_MS`. Se o ARI cai, volta `ari.ok:false` com `erro` e `dica`, sem HTTP de erro |
 | `GET /central/api/chamadas` | Histórico (até 200, mais novas primeiro) | |
 | `POST /central/api/chamadas` | Grava uma chamada no histórico | Passa por `guardaDeEscrita`: bloqueada com `READ_ONLY=1` e com Origin externa |
@@ -130,6 +134,10 @@ O `asterisk/instalar.sh` preenche os `*.conf.modelo` com senhas aleatórias e gr
 - `/api/celular` entrega a senha do celular gateway (`GW_SENHA`) com as mesmas travas. O navegador monta o JSON
   do QR e desenha o QR sem gravar nada; o QR se esconde sozinho em 2 minutos e some da tela ao fechar o painel.
   Quem fotografa ou filma o QR consegue registrar um celular no seu Asterisk: não mostre a tela a estranhos.
+- `/apk/<arquivo>.apk` é aberto a qualquer aparelho da rede local (o celular precisa baixar). Ele só entrega o
+  `.apk` que está em `modulos/central/apk-celular/` (pasta fora do GitHub). Não há segredo nele: é o app compilado
+  do código público mais os patches da pasta `apk/`. Mesmo assim, confira o SHA-256 que o painel mostra com o do resumo da
+  execução do workflow, e não deixe nessa pasta nada além do APK.
 - Com a senha do ramal, qualquer pessoa liga pelo seu chip. Por isso a senha é aleatória (32 caracteres
   hexadecimais), fica só no `.env` (fora do GitHub) e o dialplan limita os destinos.
 - Não existe login na tela. Se o PC está numa rede que você não controla, libere a porta 3333 só para você

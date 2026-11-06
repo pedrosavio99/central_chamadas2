@@ -11,8 +11,8 @@ certo.** Se travar, pare e me mande o que a etapa pede (está no fim de cada uma
 - Uma chamada por vez. O celular tem uma linha só; a segunda chamada que chega leva "ocupado".
 - Sem tom de "chamando". O app do celular não repassa esse som. A tela mostra "Chamando..." e o áudio só
   começa quando o outro lado atende.
-- O celular precisa estar ligado, na mesma rede Wi-Fi do PC e com o **Shizuku** rodando. Depois de reiniciar o
-  celular, o Shizuku precisa ser iniciado de novo, à mão.
+- O celular precisa estar ligado, na mesma rede Wi-Fi do PC e com a **Depuração sem fio** ligada. O app se
+  pareia uma vez e depois se reconecta sozinho, também depois de reiniciar o celular (precisa de Wi-Fi).
 - Enquanto "Take over calls" estiver ligado no app, as ligações recebidas no chip tocam no navegador, **não no
   celular**.
 - Cada chamada feita gasta minutos do plano do chip. Teste primeiro com o seu próprio número.
@@ -51,7 +51,7 @@ mandar se falhar".
 | Gateway | O celular fazendo a ponte entre a central e a rede do chip |
 | SIP | O protocolo que os dois lados usam para combinar a chamada |
 | WebRTC / JsSIP | O jeito de o navegador mandar e receber voz; JsSIP é a biblioteca que fala SIP no navegador |
-| Shizuku | App que dá ao Voice SIP Agent o poder de controlar as ligações do celular sem root |
+| Depuração sem fio | Opção do Android (Opções do desenvolvedor) pela qual o próprio app pega o poder de controlar as ligações sem root |
 | ARI | A porta de leitura do Asterisk que o servidor usa para perguntar "o celular está online?" |
 | Dialplan | A regra que diz o que acontece quando alguém disca um número |
 
@@ -141,8 +141,10 @@ Se falhar: me mande a saída do `git push`.
 
 Objetivo: obter o arquivo `.apk` do app **Voice SIP Agent**. O repositório do app não publica APK pronto, então
 o workflow `.github/workflows/gerar-apk.yml` baixa o código dele (fixado pelo commit da versão 0.4.1) e compila.
-Antes de compilar, ele aplica o patch `apk/qr-scan.patch` (deste repositório), que acrescenta ao app o botão
-**Scan QR code**: é por ele que a Central configura o celular sem digitar nada (Etapa 6.4).
+Antes de compilar, ele aplica dois patches (deste repositório): `apk/qr-scan.patch`, que acrescenta ao app o botão
+**Scan QR code** (é por ele que a Central configura o celular sem digitar nada, Etapa 6.4), e
+`apk/sem-shizuku.patch`, que faz o próprio app se parear com a Depuração sem fio do celular e iniciar o helper
+de ligações sozinho (Etapa 6.2). Assim você não instala nem configura o Shizuku.
 
 1. No GitHub, abra o seu repositório, aba **Actions**.
 2. Na lista da esquerda, clique em **Gerar APK do celular gateway**.
@@ -163,7 +165,7 @@ sha256sum -c *.sha256
 Esperado (o trecho do meio é o início do hash do commit):
 
 ```text
-voice-sip-agent-298d64b89b-qr-debug.apk: OK
+voice-sip-agent-298d64b89b-gw-debug.apk: OK
 ```
 
 O hash completo também aparece no resumo da execução no GitHub.
@@ -281,19 +283,42 @@ Se falhar: me mande o que aparece no console (F12) e a saída de `sudo tail -n 4
 
 Objetivo: o celular entrar na central como `android-gw`.
 
-**6.1 Instalar o APK.** Passe o arquivo `.apk` da Etapa 3 para o celular (cabo, Drive, e-mail) e abra-o. O
+**6.1 Instalar o APK.** *Pela Central (sem cabo nem Drive).* No PC, na pasta do projeto, coloque o APK onde a
+Central procura (troque o nome do `.zip` se o seu for outro):
+
+```bash
+python3 -m zipfile -e ~/Downloads/voice-sip-agent-apk.zip modulos/central/apk-celular
+```
+
+Abra a Central, toque no ícone de celular do topo e, na aba **1. Baixar o app**, aponte a câmera do celular para o
+QR (celular e PC na mesma rede Wi-Fi). Toque no link e baixe o arquivo. Se o Chrome avisar que o download é
+inseguro, escolha baixar mesmo assim: é o seu próprio APK, servido pelo seu PC. *Ou, se preferir:* passe o arquivo
+`.apk` da Etapa 3 para o celular (cabo, Drive, e-mail). Nos dois casos, abra o arquivo no celular. O
 Android vai pedir para permitir "instalar apps desconhecidos" para o app que você usou para abrir o arquivo.
 Se o celular for Xiaomi, POCO, Redmi ou Infinix e não deixar instalar, copie o arquivo e instale pelo
 gerenciador de arquivos; em Samsung, desligue o **Auto Blocker**.
 
-**6.2 Instalar e iniciar o Shizuku.** Instale o app **Shizuku** (Play Store) e siga o guia oficial
-[shizuku.rikka.app/guide/setup](https://shizuku.rikka.app/guide/setup/) usando a opção **Depuração sem fio**
-(Opções do desenvolvedor, no celular, conectado ao Wi-Fi). O Shizuku deve mostrar "Shizuku está em execução".
-Em celulares MediaTek ou Infinix, se o app der erro na Etapa 6.3, use o Shizuku 13.5.4 (a 13.6.0 tem um defeito
-conhecido nesses aparelhos).
+**6.2 Parear o celular (uma vez só).** O app precisa de uma permissão que o Android só dá pela Depuração sem
+fio, e ele mesmo pede. Com o celular no Wi-Fi:
 
-**6.3 Dar permissão.** Abra o **Voice SIP Agent**. Na aba **Health**, toque em **Grant Shizuku** e permita.
-A configuração roda sozinha.
+1. Ative as **Opções do desenvolvedor**: Configurações, Sobre o telefone, toque 7 vezes em **Número da versão**
+   (pule se já existirem).
+2. Opções do desenvolvedor, ligue **Depuração sem fio** (e confirme "Permitir" para a rede, se perguntar).
+3. Abra o **Voice SIP Agent**. No topo aparece a caixa **First setup: pair this phone**. Toque em **Pair this
+   phone** (no Android 13 ou mais novo, permita as notificações).
+4. As Opções do desenvolvedor abrem. Entre em **Depuração sem fio**, toque em **Parear dispositivo com código de
+   pareamento**. Aparece um código de 6 dígitos.
+5. Puxe a barra de notificações, na notificação **Pair this phone** toque em **Type the code**, digite os 6
+   dígitos e envie.
+
+Esperado: a notificação vira "Phone paired", a caixa de pareamento some e, na aba **Health**, **Privileged
+helper** fica verde ("CONNECTED"). Se o código vier errado ou a janela fechar, abra **Parear dispositivo...**
+de novo (o código muda toda vez) e repita o passo 5. Se a notificação não aparecer, digite o código no campo da
+própria caixa do app, ou `PORTA CÓDIGO` (a porta que a janela de pareamento mostra, um espaço, o código).
+
+**6.3 O que acontece depois.** Nas próximas vezes (inclusive depois de reiniciar o celular) o app liga a Depuração
+sem fio sozinho e reinicia o helper, sem você fazer nada, desde que o celular esteja no Wi-Fi e o **Take over
+calls** esteja ligado. Se a aba **Health** mostrar "Helper not connected", toque em **Reconnect helper**.
 
 **6.4 Configurar o servidor.**
 
@@ -333,7 +358,7 @@ segundos), a linha "Celular gateway" fica verde: "Registrado e pronto".
 
 Se não ficar: confira nesta ordem. (1) Celular e PC na mesma rede e o roteador sem isolamento de clientes. (2) O
 IP digitado é o do PC (`hostname -I`). (3) Firewall do PC (`sudo ufw status`). (4) No app, a aba Health sem
-itens vermelhos e o Shizuku em execução. (5) `Take over calls` ligado.
+itens vermelhos e **Privileged helper** verde (se não, refaça o pareamento da Etapa 6.2). (5) `Take over calls` ligado.
 
 Se falhar: me mande uma foto/texto da aba Health do app e a saída de
 `sudo asterisk -rx "pjsip show contacts"`.
@@ -364,11 +389,11 @@ Se falhar, consulte a tabela abaixo.
 | "O Asterisk recusou a senha do ramal" | `SIP_SENHA` do `.env` diferente da do `pjsip.conf` | Rode o `instalar.sh` de novo (ele refaz os arquivos a partir do `.env`) |
 | "Sem conexão com ws://localhost:8088/ws" | Asterisk parado | `sudo systemctl status asterisk` e `sudo systemctl restart asterisk` |
 | "Microfone negado no navegador" | Permissão do microfone bloqueada | Cadeado na barra de endereço, permitir o microfone; abra por `localhost` |
-| "Celular gateway indisponível" ou 480 | O celular não está pronto (Shizuku parado, `Take over calls` desligado) | Aba Health do app; reinicie o Shizuku e abra o app uma vez |
+| "Celular gateway indisponível" ou 480 | O celular não está pronto (helper desconectado, `Take over calls` desligado) | Aba Health do app; ligue a Depuração sem fio e toque em **Reconnect helper** |
 | "Número não aceito pelo Asterisk" | Número fora do padrão (DDD + 8 ou 9 dígitos) | Use só números brasileiros com DDD; 0800 e internacionais são bloqueados de propósito |
 | A chamada completa mas não se ouve nada (ou o outro lado não ouve) | Áudio do celular | No app: **Cellular audio** = *Direct telephony* e **Mute call audio on this phone** desligado |
 | Chamada recebida não toca no navegador | `Take over calls` desligado, ramal não registrado ou outra aba da Central aberta | Feche as outras abas (um registro por vez) e confira a linha "Ramal" |
-| Caiu tudo depois de reiniciar o celular | O Shizuku não volta sozinho | Inicie o Shizuku de novo e abra o app uma vez |
+| Caiu tudo depois de reiniciar o celular | O app só reconecta com Wi-Fi e Depuração sem fio ligados | Ligue o Wi-Fi, confira a Depuração sem fio e abra o app uma vez |
 | Em chip com Wi-Fi calling (ex.: Google Fi), a chamada cai poucos segundos depois de atender | A operadora trata a chamada como VoIP | Desligue o Wi-Fi calling desse chip |
 
 **Comandos úteis para investigar** (e para me mandar):
@@ -417,7 +442,7 @@ MOCK=1 npm start      # e abra /central/
 - O Asterisk só escuta WebSocket e ARI em `127.0.0.1` e só aceita SIP de redes privadas.
 - Não existe login na tela: quem alcança a porta 3333 pela rede vê o histórico. Em rede que não é sua, libere a
   porta só para você no firewall.
-- O Shizuku dá poderes de shell ao app. Instale só o APK que você mesmo compilou (e conferiu o hash).
+- O app ganha poderes de shell no celular (pela Depuração sem fio). Instale só o APK que você mesmo compilou (e conferiu o hash).
 - Este tutorial é a v1 local. **Fora de escopo** (v2): Asterisk na nuvem (Oracle), TLS/SRTP, Flexisip, mais de
   um atendente, login, histórico em disco, gravação de chamadas.
 

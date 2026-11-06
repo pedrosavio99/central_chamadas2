@@ -1,0 +1,2137 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 4b17c6e..88c1495 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -63,8 +63,6 @@ dependencies {
+     implementation(project(":gateway"))
+     implementation(project(":telephony"))
+     implementation(project(":privileged"))
+-    // Declared by this module's manifest; keep it on the app compile classpath for lint.
+-    implementation(libs.shizuku.provider)
+ 
+     implementation(libs.androidx.core.ktx)
+     implementation(libs.androidx.activity.compose)
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 11607c7..ee7ba3d 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -1,5 +1,6 @@
+ <?xml version="1.0" encoding="utf-8"?>
+-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
++<manifest xmlns:android="http://schemas.android.com/apk/res/android"
++    xmlns:tools="http://schemas.android.com/tools">
+ 
+     <uses-permission android:name="android.permission.INTERNET" />
+     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+@@ -11,6 +12,8 @@
+     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+     <uses-permission android:name="android.permission.WAKE_LOCK" />
+     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
++    <!-- Concedida pelo proprio app via ADB no primeiro pareamento; religa o Wireless debugging apos reboot. -->
++    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
+ 
+     <application
+         android:name=".GatewayApp"
+@@ -79,17 +82,10 @@
+             android:exported="true"
+             android:permission="android.permission.DUMP" />
+ 
+-        <provider
+-            android:name="rikka.shizuku.ShizukuProvider"
+-            android:authorities="${applicationId}.shizuku"
+-            android:enabled="true"
+-            android:exported="true"
+-            android:multiprocess="false"
+-            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+-
+-        <meta-data
+-            android:name="moe.shizuku.client.V3_SUPPORT"
+-            android:value="true" />
++        <!-- Recebe o codigo de pareamento digitado na notificacao (Wireless debugging). -->
++        <receiver
++            android:name=".PairingReceiver"
++            android:exported="false" />
+ 
+         <!-- Pede ao Google Play services o modulo do leitor de QR junto com a instalacao. -->
+         <meta-data
+diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/DialerRoleActivity.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/DialerRoleActivity.kt
+index 27fb843..867a6e2 100644
+--- a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/DialerRoleActivity.kt
++++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/DialerRoleActivity.kt
+@@ -3,7 +3,6 @@ package io.github.sparkcyf.voicesipagent.app
+ import android.app.KeyguardManager
+ import android.app.role.RoleManager
+ import android.content.Intent
+-import android.content.pm.PackageManager
+ import android.provider.Settings
+ import android.os.Build
+ import android.os.Bundle
+@@ -11,7 +10,6 @@ import androidx.activity.ComponentActivity
+ import androidx.activity.enableEdgeToEdge
+ import androidx.activity.result.contract.ActivityResultContracts
+ import io.github.sparkcyf.voicesipagent.privileged.CallAccess
+-import rikka.shizuku.Shizuku
+ 
+ /** Role acquisition is confined to explicit UI actions. */
+ abstract class DialerRoleActivity : ComponentActivity() {
+@@ -37,10 +35,8 @@ abstract class DialerRoleActivity : ComponentActivity() {
+         val rt = GatewayRuntime.get(this)
+         val role = getSystemService(RoleManager::class.java)
+         val held = role.isRoleHeld(RoleManager.ROLE_DIALER)
+-        // Off stops our helper, but an authorized Shizuku server can restart it.
+-        val helperAvailable = rt.shizuku.service != null || runCatching {
+-            Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+-        }.getOrDefault(false)
++        // Off stops our helper, but a paired phone can start it again by itself.
++        val helperAvailable = rt.shellHelper.service != null || rt.shellHelper.canRestart()
+         val needsSystemRequest = on && !held && !helperAvailable &&
+             CallAccess.effective(rt.settings.callAccess, Build.VERSION.SDK_INT, held) == CallAccess.DIALER
+         rt.setTakeover(on)
+@@ -53,7 +49,7 @@ abstract class DialerRoleActivity : ComponentActivity() {
+             when {
+                 !role.isRoleAvailable(RoleManager.ROLE_DIALER) -> message("Default dialer selection is unavailable on this device.")
+                 role.isRoleHeld(RoleManager.ROLE_DIALER) -> GatewayRuntime.get(this).refreshCallAccess()
+-                GatewayRuntime.get(this).settings.takeover && GatewayRuntime.get(this).shizuku.service != null ->
++                GatewayRuntime.get(this).settings.takeover && GatewayRuntime.get(this).shellHelper.service != null ->
+                     GatewayRuntime.get(this).changeDefaultDialer(true)
+                 else -> {
+                     val rt = GatewayRuntime.get(this)
+@@ -67,7 +63,7 @@ abstract class DialerRoleActivity : ComponentActivity() {
+ 
+     protected fun switchDialer() = afterUnlock {
+         val rt = GatewayRuntime.get(this)
+-        if (rt.settings.takeover && rt.shizuku.service != null) rt.changeDefaultDialer(false) else chooseDialerInSettings()
++        if (rt.settings.takeover && rt.shellHelper.service != null) rt.changeDefaultDialer(false) else chooseDialerInSettings()
+     }
+ 
+     protected fun cancelDialerChange() = afterUnlock { GatewayRuntime.get(this).cancelDialerChange() }
+diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayDialerActivity.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayDialerActivity.kt
+index aa28360..949396c 100644
+--- a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayDialerActivity.kt
++++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayDialerActivity.kt
+@@ -19,7 +19,7 @@ import androidx.compose.runtime.collectAsState
+ import androidx.compose.runtime.getValue
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.unit.dp
+-import io.github.sparkcyf.voicesipagent.privileged.ShizukuConnector
++import io.github.sparkcyf.voicesipagent.privileged.HelperConnector
+ 
+ /** Safe to display over the lockscreen: no configuration, caller numbers, or diagnostic logs. */
+ class GatewayDialerActivity : DialerRoleActivity() {
+@@ -54,7 +54,7 @@ class GatewayDialerActivity : DialerRoleActivity() {
+                             Text(if (settings.takeover) "Turn takeover off" else "Turn takeover on")
+                         }
+                         Text("For manual calls, restore your usual phone app or choose one in system Settings.")
+-                        if (health.holdsDialer && settings.takeover && health.shizuku == ShizukuConnector.State.CONNECTED) {
++                        if (health.holdsDialer && settings.takeover && health.shellHelper == HelperConnector.State.CONNECTED) {
+                             Button(onClick = ::switchDialer, enabled = !health.dialerChangeRunning) { Text("Restore previous dialer") }
+                         }
+                         OutlinedButton(onClick = ::chooseDialerInSettings, enabled = !health.dialerChangeRunning) { Text("Choose dialer in Settings") }
+diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayRuntime.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayRuntime.kt
+index e29e205..c3bf9ff 100644
+--- a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayRuntime.kt
++++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayRuntime.kt
+@@ -21,7 +21,7 @@ import io.github.sparkcyf.voicesipagent.privileged.AudioMethod
+ import io.github.sparkcyf.voicesipagent.privileged.CallAccess
+ import io.github.sparkcyf.voicesipagent.privileged.DialerRoleResult
+ import io.github.sparkcyf.voicesipagent.privileged.CallAccessRequirements
+-import io.github.sparkcyf.voicesipagent.privileged.ShizukuConnector
++import io.github.sparkcyf.voicesipagent.privileged.HelperConnector
+ import io.github.sparkcyf.voicesipagent.pjsua2.PjsipConfig
+ import io.github.sparkcyf.voicesipagent.pjsua2.PjsipEndpoint
+ import io.github.sparkcyf.voicesipagent.pjsua2.PjsipLog
+@@ -51,8 +51,8 @@ import java.util.concurrent.ScheduledFuture
+ import java.util.concurrent.ScheduledThreadPoolExecutor
+ 
+ data class HealthState(
+-    val shizuku: ShizukuConnector.State = ShizukuConnector.State.SHIZUKU_NOT_RUNNING,
+-    val shizukuDetail: String = "",
++    val shellHelper: HelperConnector.State = HelperConnector.State.NOT_RUNNING,
++    val shellHelperDetail: String = "",
+     /** Null until the privileged service has reported. */
+     val privileged: Map<String, Boolean>? = null,
+     val privilegedDetail: String = "",
+@@ -88,7 +88,7 @@ data class HealthState(
+ ) {
+ 
+     val privilegedReady: Boolean
+-        get() = callAccessReady && audioReady && shizuku == ShizukuConnector.State.CONNECTED
++        get() = callAccessReady && audioReady && shellHelper == HelperConnector.State.CONNECTED
+ 
+     /** Takeover needs persistence even before setup; a retained dialer role needs a reminder. */
+     val needsForegroundService: Boolean
+@@ -97,7 +97,7 @@ data class HealthState(
+ 
+ /**
+  * Owns every long-lived component and wires them together:
+- * Shizuku -> privileged setup -> cellular endpoint readiness; settings -> SIP UA; both -> CallBridge.
++ * helper -> privileged setup -> cellular endpoint readiness; settings -> SIP UA; both -> CallBridge.
+  * The bridge's B side is the SIP UA normally, or [EchoEndpoint] in loopback-test mode.
+  * Switching takeover off withdraws companion access and SIP, then restores the previous dialer
+  * unless the user chose to retain the role. Role-qualified recovery components stay enabled.
+@@ -121,7 +121,7 @@ class GatewayRuntime private constructor(context: Context) {
+     private val _dialerMessage = MutableStateFlow("")
+     val dialerMessage: StateFlow<String> = _dialerMessage
+ 
+-    val shizuku = ShizukuConnector(app) { AppLog.i(it) }
++    val shellHelper = HelperConnector(app) { AppLog.i(it) }
+     private fun audioFormat() = if (settings.sipStack == SipStack.PJSUA2)
+         PcmFormat.WIDEBAND else PcmFormat.NARROWBAND
+ 
+@@ -129,7 +129,7 @@ class GatewayRuntime private constructor(context: Context) {
+     /** Voice-call stream mute stopped direct capture on this build; direct calls skip it. */
+     val directMuteIncompatible: StateFlow<Boolean> = _directMuteIncompatible
+ 
+-    private val audioOpener = PrivilegedAudioOpener(shizuku, { settings.audioMethod },
++    private val audioOpener = PrivilegedAudioOpener(shellHelper, { settings.audioMethod },
+         { settings.muteEarpiece }, ::audioFormat,
+         onStatusChanged = { worker.execute { updateAudioStatusPolling() } },
+         directMuteBlocked = { _directMuteIncompatible.value },
+@@ -177,7 +177,7 @@ class GatewayRuntime private constructor(context: Context) {
+     @Volatile private var networkCallback: ConnectivityManager.NetworkCallback? = null
+     private val dialerHandoffStore = DialerHandoffStore(app)
+     private val dialerHandoff = DialerHandoff(app.packageName, dialerHandoffStore, object : DialerHandoff.Backend {
+-        private fun service() = shizuku.service ?: error("Shizuku not connected. Use system dialer selection.")
++        private fun service() = shellHelper.service ?: error("Helper not connected. Use system dialer selection.")
+         override fun state() = DialerRoleResult.fromBundle(service().dialerState()).let {
+             it.state ?: error(it.message.ifEmpty { "Could not read the default dialer." })
+         }
+@@ -224,12 +224,12 @@ class GatewayRuntime private constructor(context: Context) {
+             }
+         }
+         AppLog.i("runtime starting ($settings)")
+-        shizuku.addListener { state, svc ->
+-            val detail = shizuku.detail
++        shellHelper.addListener { state, svc ->
++            val detail = shellHelper.detail
+             worker.execute {
+-                if (shizuku.state != state || shizuku.service !== svc) return@execute
+-                _health.update { it.copy(shizuku = state, shizukuDetail = detail) }
+-                if (state == ShizukuConnector.State.CONNECTED && svc != null) {
++                if (shellHelper.state != state || shellHelper.service !== svc) return@execute
++                _health.update { it.copy(shellHelper = state, shellHelperDetail = detail) }
++                if (state == HelperConnector.State.CONNECTED && svc != null) {
+                     audioOpener.refreshStatus()
+                     if (pendingDialerChange?.acquire == true) attemptDialerChange()
+                     runSetup()
+@@ -242,7 +242,7 @@ class GatewayRuntime private constructor(context: Context) {
+         configureCallAccess()
+         _health.update { it.copy(takeover = settings.takeover) }
+         updateReadiness()
+-        if (!_health.value.takeover) shizuku.stop()
++        if (!_health.value.takeover) shellHelper.stop()
+     }
+ 
+     /** Track ownership before promotion so destruction also cancels a failed start. */
+@@ -290,12 +290,12 @@ class GatewayRuntime private constructor(context: Context) {
+         sipHeld = null
+         scheduleSipHoldCheck(null)
+         audioOpener.closeForShutdown()
+-        shizuku.service?.let { svc ->
++        shellHelper.service?.let { svc ->
+             runCatching { svc.setupCallAccess(app.packageName, false, _health.value.effectiveCallAccess) }
+                 .onFailure { AppLog.w("companion cleanup failed", it) }
+         }
+-        if (pendingDialerChange == null) runCatching { shizuku.stop() }
+-            .onFailure { AppLog.w("Shizuku cleanup failed", it) }
++        if (pendingDialerChange == null) runCatching { shellHelper.stop() }
++            .onFailure { AppLog.w("helper cleanup failed", it) }
+         _health.update { it.copy(privileged = null, sip = EndpointStatus(false,
+             if (it.takeover) "gateway stopped" else "takeover off")) }
+     }
+@@ -303,9 +303,9 @@ class GatewayRuntime private constructor(context: Context) {
+     private fun startBackgroundTasks() {
+         if (healthCheck != null) return
+         worker.allowCoreThreadTimeOut(false)
+-        shizuku.start()
++        shellHelper.start()
+         watchNetwork()
+-        // Telecom or Shizuku restarts can disrupt call access. Recheck health and repair companion
++        // Telecom or helper restarts can disrupt call access. Recheck health and repair companion
+         // setup while idle if access is unavailable; a missing override alone does not trigger setup.
+         healthCheck = worker.scheduleWithFixedDelay(::periodicCheck, 60, 60, TimeUnit.SECONDS)
+     }
+@@ -343,7 +343,7 @@ class GatewayRuntime private constructor(context: Context) {
+         if (hasActiveWork() || callAudioStatus.value.active) return@execute
+         // Include calls that our InCallService may not currently see. Unknown means wait.
+         val idle = runCatching {
+-            shizuku.service?.let { DialerRoleResult.fromBundle(it.dialerState()).state?.inCall == false }
++            shellHelper.service?.let { DialerRoleResult.fromBundle(it.dialerState()).state?.inCall == false }
+         }.getOrNull() == true
+         if (idle) audioOpener.retryRestoration()
+     }
+@@ -358,7 +358,7 @@ class GatewayRuntime private constructor(context: Context) {
+             return@execute
+         }
+         setupPending = false
+-        val svc = shizuku.service ?: return@execute updatePrivileged(null, "Shizuku not connected")
++        val svc = shellHelper.service ?: return@execute updatePrivileged(null, "Helper not connected")
+         try {
+             refreshRoleState()
+             val b = svc.setupCallAccess(app.packageName, _health.value.takeover, _health.value.effectiveCallAccess)
+@@ -373,7 +373,7 @@ class GatewayRuntime private constructor(context: Context) {
+     private fun periodicCheck() {
+         if (healthCheck == null) return
+         refreshRoleState()
+-        val svc = shizuku.service ?: return updateReadiness()
++        val svc = shellHelper.service ?: return updateReadiness()
+         try {
+             val b = svc.health(app.packageName)
+             applyHealthBundle(b)
+@@ -420,7 +420,7 @@ class GatewayRuntime private constructor(context: Context) {
+ 
+     fun refreshCallAccess() = worker.execute {
+         configureCallAccess()
+-        if (shizuku.service != null) audioOpener.refreshStatus()
++        if (shellHelper.service != null) audioOpener.refreshStatus()
+         updateReadiness()
+         // Changing companion registration can change binding. Defer app-controlled setup while
+         // Telecom has any call, including calls outside the bridge.
+@@ -467,8 +467,8 @@ class GatewayRuntime private constructor(context: Context) {
+         val problem = when {
+             h.dialerChangeRunning -> "Changing the default dialer"
+             !gatewayEnabled -> "Gateway service not running"
+-            // Without Shizuku, privileged call-access health is unknown; report the root cause.
+-            h.shizuku != ShizukuConnector.State.CONNECTED -> shizukuProblem(h.shizuku)
++            // Without the helper, privileged call-access health is unknown; report the root cause.
++            h.shellHelper != HelperConnector.State.CONNECTED -> shellHelperProblem(h.shellHelper)
+             !access -> requirements.problem!!
+             !audio -> "Selected call audio unavailable: ${h.privilegedDetail}"
+             else -> null
+@@ -491,11 +491,13 @@ class GatewayRuntime private constructor(context: Context) {
+ 
+     private fun inboundOffLabel(s: GatewaySettings) = s.inboundExcludedSlots.sorted().joinToString(",").ifEmpty { "none" }
+ 
+-    // A restarted Shizuku server may not push its binder to this running app until an activity
+-    // comes to the foreground (see AGENT.md), so tell the user how to reconnect.
+-    private fun shizukuProblem(state: ShizukuConnector.State) =
+-        if (state == ShizukuConnector.State.SHIZUKU_NOT_RUNNING) "Shizuku not running. After starting it, open this app to reconnect"
+-        else "Shizuku not connected"
++    // The helper is started over Wireless debugging; say which step is missing.
++    private fun shellHelperProblem(state: HelperConnector.State) = when (state) {
++        HelperConnector.State.NOT_RUNNING -> "Helper not connected. Turn on Wireless debugging; the app reconnects by itself"
++        HelperConnector.State.PAIRING_REQUIRED, HelperConnector.State.PAIRING_FAILED ->
++            "Pairing needed. Open the app and tap Pair this phone"
++        else -> "Helper not connected"
++    }
+ 
+     private fun updateReadiness() {
+         val c = checkCellular()
+@@ -510,7 +512,7 @@ class GatewayRuntime private constructor(context: Context) {
+                 "Waiting to become the default dialer" else "Waiting to restore the previous dialer"
+             !h.takeover -> if (h.holdsDialer) "Gateway off; this app still holds the dialer role" else "Gateway off"
+             !gatewayEnabled -> "Gateway service not running"
+-            h.shizuku != ShizukuConnector.State.CONNECTED -> shizukuProblem(h.shizuku)
++            h.shellHelper != HelperConnector.State.CONNECTED -> shellHelperProblem(h.shellHelper)
+             !access -> c.accessProblem!!
+             !audio -> "Selected call audio unavailable: ${h.privilegedDetail}"
+             !h.loopbackTest && !h.sip.ready -> "SIP unavailable: ${h.sip.detail}"
+@@ -604,7 +606,7 @@ class GatewayRuntime private constructor(context: Context) {
+         pendingDialerChange = null
+         _health.update { it.copy(dialerChangePending = false, dialerChangeFailed = false, dialerChangeAcquire = false) }
+         _dialerMessage.value = ""
+-        if (!_health.value.takeover) shizuku.stop()
++        if (!_health.value.takeover) shellHelper.stop()
+     }
+ 
+     private fun prepareDialerChangeRequest(acquire: Boolean) {
+@@ -635,9 +637,9 @@ class GatewayRuntime private constructor(context: Context) {
+         val change = pendingDialerChange ?: return
+         dialerRetry?.cancel(false)
+         dialerRetry = null
+-        if (change.acquire && (!_health.value.takeover || shizuku.service == null)) {
++        if (change.acquire && (!_health.value.takeover || shellHelper.service == null)) {
+             _health.update { it.copy(dialerChangePending = true) }
+-            _dialerMessage.value = "Waiting for Shizuku. You can cancel the dialer change."
++            _dialerMessage.value = "Waiting for the helper. You can cancel the dialer change."
+             updateReadiness()
+             return
+         }
+@@ -1065,7 +1067,7 @@ class GatewayRuntime private constructor(context: Context) {
+         return "ready=${h.cellularReady} (${h.readinessDetail}) takeover=${onOff(h.takeover)}" +
+             (if (h.takeoverOffPending || h.takeoverOnPending) " pending" else "") +
+             " sip=${if (h.sip.ready) "ready" else "down"} (${h.sip.detail}) stack=${settings.sipStack.id}" +
+-            " shizuku=${h.shizuku} audio_method=${settings.audioMethod}:${audioMethodName(settings.audioMethod)}" +
++            " shellHelper=${h.shellHelper} audio_method=${settings.audioMethod}:${audioMethodName(settings.audioMethod)}" +
+             " audioReady=${h.audioReady} tap=${if (audio.active) audio.backend else "idle"}" +
+             " earpiece_mute=${onOff(settings.muteEarpiece)} loopback=${onOff(h.loopbackTest)}" +
+             " sims=${h.sims.joinToString(",").ifEmpty { "none" }} default_sim=${defaultSimLabel(h)}" +
+@@ -1102,7 +1104,7 @@ class GatewayRuntime private constructor(context: Context) {
+         return buildString {
+             appendLine("takeover=${h.takeover} pendingOff=${h.takeoverOffPending} pendingOn=${h.takeoverOnPending} " +
+                 "keepDefaultDialer=${settings.keepDefaultDialer} muteEarpiece=${settings.muteEarpiece}")
+-            appendLine("shizuku=${h.shizuku} (${h.shizukuDetail})")
++            appendLine("shellHelper=${h.shellHelper} (${h.shellHelperDetail})")
+             appendLine("privileged=${h.privileged} ${h.privilegedDetail}")
+             appendLine("sip=${h.sip.detail} ready=${h.sip.ready} stack=${settings.sipStack.id} " +
+                 "transport=${settings.sipTransport} srtp=${settings.srtp} debugLog=${settings.sipDebugLog}")
+@@ -1118,14 +1120,14 @@ class GatewayRuntime private constructor(context: Context) {
+             appendLine("calls=${h.calls.summary} settingsPending=${h.settingsPending}")
+             appendLine("loopback=${h.loopbackTest} session=${h.session}")
+             appendLine("callAudio=${callAudioStatus.value}")
+-            shizuku.service?.let { appendLine("tap=${runCatching { it.audioStats() }.getOrDefault("?")}") }
++            shellHelper.service?.let { appendLine("tap=${runCatching { it.audioStats() }.getOrDefault("?")}") }
+         }
+     }
+ 
+     companion object {
+         @Volatile private var instance: GatewayRuntime? = null
+ 
+-        /** Outlasts brief Shizuku reconnects; shorter than a typical PBX qualify/failover window. */
++        /** Outlasts brief helper reconnects; shorter than a typical PBX qualify/failover window. */
+         internal const val SIP_HOLD_GRACE_MS = 45_000L
+ 
+         internal fun newWorker() = ScheduledThreadPoolExecutor(1) { task ->
+diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayService.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayService.kt
+index af88f2b..315e6f8 100644
+--- a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayService.kt
++++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayService.kt
+@@ -14,7 +14,7 @@ import android.os.IBinder
+ import android.os.Build
+ import android.telecom.TelecomManager
+ import androidx.core.content.ContextCompat
+-import io.github.sparkcyf.voicesipagent.privileged.ShizukuConnector
++import io.github.sparkcyf.voicesipagent.privileged.HelperConnector
+ import kotlinx.coroutines.CoroutineScope
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.SupervisorJob
+@@ -137,10 +137,11 @@ class GatewayService : Service() {
+             !h.takeover && h.holdsDialer -> "Takeover off. Still your default phone app; change it in Settings."
+             !h.takeover -> "Call takeover off"
+             h.loopbackTest -> "Loopback test mode"
+-            // Shizuku pushes its binder to client apps on uid/activity transitions. A restarted
+-            // server may skip a running app, so opening the activity is the reconnect path.
+-            h.shizuku == ShizukuConnector.State.SHIZUKU_NOT_RUNNING -> "Shizuku is not running. Start Shizuku, then tap here to reconnect."
+-            !h.privilegedReady -> "Setup needed · Shizuku ${h.shizuku.name.lowercase()}"
++            // The helper is started over Wireless debugging. Opening the activity retries at once.
++            h.shellHelper == HelperConnector.State.NOT_RUNNING -> "Helper not connected. Turn on Wireless debugging and tap here to reconnect."
++            h.shellHelper == HelperConnector.State.PAIRING_REQUIRED || h.shellHelper == HelperConnector.State.PAIRING_FAILED ->
++                "Pairing needed. Tap here, then Pair this phone."
++            !h.privilegedReady -> "Setup needed · helper ${h.shellHelper.name.lowercase()}"
+             !h.sip.ready -> "SIP: ${h.sip.detail}"
+             else -> "Ready · ${h.sip.detail}"
+         }
+diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/MainActivity.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/MainActivity.kt
+index c6ff2e3..1804533 100644
+--- a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/MainActivity.kt
++++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/MainActivity.kt
+@@ -65,13 +65,19 @@ import io.github.sparkcyf.voicesipagent.privileged.HealthKeys
+ import io.github.sparkcyf.voicesipagent.privileged.AudioMethod
+ import io.github.sparkcyf.voicesipagent.privileged.CallAccess
+ import io.github.sparkcyf.voicesipagent.privileged.CallAudioStatus
+-import io.github.sparkcyf.voicesipagent.privileged.ShizukuConnector
++import io.github.sparkcyf.voicesipagent.privileged.HelperConnector
+ import io.github.sparkcyf.voicesipagent.telephony.DefaultSim
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.launch
+ import kotlinx.coroutines.withContext
+ 
+ class MainActivity : DialerRoleActivity() {
++    override fun onResume() {
++        super.onResume()
++        // Back from Settings (Wireless debugging just turned on, or pairing done): retry the helper now.
++        GatewayRuntime.get(this).shellHelper.reconnectNow()
++    }
++
+     override fun onCreate(savedInstanceState: Bundle?) {
+         super.onCreate(savedInstanceState)
+         val runtime = GatewayRuntime.get(this)
+@@ -102,6 +108,16 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
+     ) {
+         Text("Voice SIP Agent", style = MaterialTheme.typography.headlineSmall)
+         val cur by rt.settingsFlow.collectAsState()
++        // Shown first: until this phone is paired the privileged helper cannot start, so nothing else works.
++        val needsPairing = if (h.takeover) {
++            h.shellHelper == HelperConnector.State.PAIRING_REQUIRED || h.shellHelper == HelperConnector.State.PAIRING_FAILED
++        } else !rt.shellHelper.canRestart()
++        if (needsPairing) {
++            Section("First setup: pair this phone") {
++                if (!h.takeover) Text("Turn on Take over calls below after pairing.", style = MaterialTheme.typography.bodySmall)
++                PairingGuide(rt, h.shellHelper == HelperConnector.State.PAIRING_FAILED, h.shellHelperDetail, !h.dialerChangeRunning)
++            }
++        }
+         Section("Takeover") {
+             Toggle("Take over calls", cur.takeover, setTakeover) {
+                 when {
+@@ -137,7 +153,7 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
+             }
+             if (roleMessage.isNotEmpty()) Text(roleMessage)
+             if (h.holdsDialer || h.dialerChangeFailed) {
+-                if (h.holdsDialer && cur.takeover && h.shizuku == ShizukuConnector.State.CONNECTED) {
++                if (h.holdsDialer && cur.takeover && h.shellHelper == HelperConnector.State.CONNECTED) {
+                     OutlinedButton(onClick = switchDialer, enabled = !h.dialerChangeRunning) { Text("Restore previous dialer") }
+                 }
+                 OutlinedButton(onClick = chooseDialer, enabled = !h.dialerChangeRunning) { Text("Choose dialer in Settings") }
+@@ -167,8 +183,8 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
+                 h.takeoverOnPending -> "Health checks will start after current calls end."
+                 else -> "Health checks are paused while takeover is off."
+             }, style = MaterialTheme.typography.bodySmall)
+-            Check("Shizuku", h.shizuku == ShizukuConnector.State.CONNECTED,
+-                if (h.takeover) "${h.shizuku} ${h.shizukuDetail}" else "Stopped while takeover is off")
++            Check("Privileged helper", h.shellHelper == HelperConnector.State.CONNECTED,
++                if (h.takeover) "${h.shellHelper} ${h.shellHelperDetail}" else "Stopped while takeover is off")
+             Check("Call audio access", h.audioReady)
+             Check("Doze allowlisted", p?.get(HealthKeys.DOZE_ALLOWLISTED) == true)
+             Check("SIP registration", h.sip.ready,
+@@ -180,11 +196,11 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
+                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                 verticalArrangement = Arrangement.spacedBy(8.dp),
+             ) {
+-                if (h.shizuku == ShizukuConnector.State.PERMISSION_REQUIRED || h.shizuku == ShizukuConnector.State.PERMISSION_DENIED) {
+-                    Button(onClick = { rt.shizuku.requestPermission() }, enabled = actionsEnabled) { Text("Grant Shizuku") }
++                if (h.shellHelper == HelperConnector.State.NOT_RUNNING || h.shellHelper == HelperConnector.State.ERROR) {
++                    Button(onClick = { rt.shellHelper.reconnectNow() }, enabled = actionsEnabled) { Text("Reconnect helper") }
+                 }
+                 OutlinedButton(onClick = { rt.runSetup() },
+-                    enabled = actionsEnabled && h.shizuku == ShizukuConnector.State.CONNECTED) { Text("Re-run setup") }
++                    enabled = actionsEnabled && h.shellHelper == HelperConnector.State.CONNECTED) { Text("Re-run setup") }
+                 OutlinedButton(onClick = { rt.restartSip() },
+                     enabled = actionsEnabled && cur.sipConfigured) { Text("Reconnect SIP") }
+             }
+@@ -214,7 +230,7 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
+             if (callAudio.restorationPending) {
+                 Text("Local call playback restoration is unconfirmed. Sound may remain muted.",
+                     color = MaterialTheme.colorScheme.error)
+-                if (callAudio.ownsOutputChange && h.shizuku == ShizukuConnector.State.CONNECTED) {
++                if (callAudio.ownsOutputChange && h.shellHelper == HelperConnector.State.CONNECTED) {
+                     OutlinedButton(onClick = { rt.retryAudioRestoration() },
+                         enabled = !callAudio.active && h.calls.count == 0 && h.session == null) {
+                         Text("Retry restoring playback")
+diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/PairingGuide.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/PairingGuide.kt
+new file mode 100644
+index 0000000..e391420
+--- /dev/null
++++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/PairingGuide.kt
+@@ -0,0 +1,90 @@
++package io.github.sparkcyf.voicesipagent.app
++
++import android.content.Intent
++import android.content.pm.PackageManager
++import android.os.Build
++import android.provider.Settings
++import androidx.activity.compose.rememberLauncherForActivityResult
++import androidx.activity.result.contract.ActivityResultContracts
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.material3.Button
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.OutlinedButton
++import androidx.compose.material3.OutlinedTextField
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.saveable.rememberSaveable
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.platform.LocalContext
++import androidx.compose.ui.unit.dp
++
++/**
++ * One-time pairing of this phone with its own Wireless debugging, shown up front (not buried in an
++ * error) whenever the helper cannot start yet. After it, the helper starts by itself on every boot.
++ */
++@Composable
++internal fun PairingGuide(rt: GatewayRuntime, failed: Boolean, detail: String, enabled: Boolean) {
++    val ctx = LocalContext.current
++    var typed by rememberSaveable { mutableStateOf("") }
++    var note by remember { mutableStateOf("") }
++
++    fun startPairing() {
++        rt.shellHelper.beginPairing()
++        PairingNotifier.askForCode(ctx, "In Wireless debugging, tap Pair device with pairing code, then type the 6 digits here.")
++        val opened = runCatching {
++            ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
++        }.isSuccess
++        note = if (opened) "" else "Could not open Developer options. Open Settings, System, Developer options by hand."
++    }
++
++    // Without this permission the code prompt would never show up on Android 13 and newer.
++    val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { startPairing() }
++
++    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
++        Text("Pair this phone (one time)", style = MaterialTheme.typography.titleSmall)
++        Text(
++            "This app needs one extra permission that Android only gives through Wireless debugging. " +
++                "You do this once; after that the app reconnects by itself, even after a reboot.",
++            style = MaterialTheme.typography.bodySmall,
++        )
++        Text(
++            "1. Connect this phone to Wi-Fi.\n" +
++                "2. Settings, About phone, tap Build number 7 times (skip if Developer options already exists).\n" +
++                "3. Developer options, turn on Wireless debugging.\n" +
++                "4. Tap Pair this phone below. Settings opens: tap Pair device with pairing code.\n" +
++                "5. Pull down the notification and type the 6 digits in it.",
++            style = MaterialTheme.typography.bodySmall,
++        )
++        if (failed && detail.isNotBlank()) Text(detail, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
++        if (note.isNotEmpty()) Text(note, style = MaterialTheme.typography.bodySmall)
++        Button(
++            onClick = {
++                val granted = Build.VERSION.SDK_INT < 33 ||
++                    ctx.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
++                if (granted) startPairing() else askNotifications.launch(android.Manifest.permission.POST_NOTIFICATIONS)
++            },
++            enabled = enabled,
++        ) { Text("Pair this phone") }
++        // Fallback for split-screen or when notifications are blocked: "123456", or "PORT 123456".
++        OutlinedTextField(
++            value = typed,
++            onValueChange = { typed = it.take(16) },
++            label = { Text("Code here (or: port code)") },
++            singleLine = true,
++            modifier = Modifier.fillMaxWidth(),
++        )
++        OutlinedButton(
++            onClick = {
++                note = "Pairing..."
++                rt.shellHelper.submitPairingCode(typed) { ok, message -> note = message; if (ok) typed = "" }
++            },
++            enabled = enabled && typed.isNotBlank(),
++        ) { Text("Pair with this code") }
++    }
++}
+diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/PairingNotifier.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/PairingNotifier.kt
+new file mode 100644
+index 0000000..31910e5
+--- /dev/null
++++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/PairingNotifier.kt
+@@ -0,0 +1,67 @@
++package io.github.sparkcyf.voicesipagent.app
++
++import android.app.Notification
++import android.app.NotificationChannel
++import android.app.NotificationManager
++import android.app.PendingIntent
++import android.app.RemoteInput
++import android.content.Context
++import android.content.Intent
++import android.graphics.drawable.Icon
++
++/**
++ * The notification where the user types the 6-digit code shown by Android's "Pair device with pairing
++ * code" dialog. The code goes through a notification because that dialog lives in Settings: the app
++ * is in the background while it is open, and a notification reply stays reachable on top of it.
++ */
++internal object PairingNotifier {
++    const val KEY_CODE = "pairing_code"
++    private const val CHANNEL = "pairing"
++    private const val ID = 2
++
++    private fun manager(ctx: Context): NotificationManager {
++        val nm = ctx.getSystemService(NotificationManager::class.java)
++        nm.createNotificationChannel(NotificationChannel(CHANNEL, "Phone pairing", NotificationManager.IMPORTANCE_HIGH))
++        return nm
++    }
++
++    /** Asks for the code, with an inline reply field. */
++    fun askForCode(ctx: Context, text: String) {
++        val app = ctx.applicationContext
++        val input = RemoteInput.Builder(KEY_CODE).setLabel("6-digit pairing code").build()
++        val intent = Intent(app, PairingReceiver::class.java).setPackage(app.packageName)
++        // The system fills the typed text into this intent, so it has to be mutable (and explicit).
++        val pending = PendingIntent.getBroadcast(app, 0, intent, PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
++        val action = Notification.Action.Builder(Icon.createWithResource(app, R.drawable.ic_gateway), "Type the code", pending)
++            .addRemoteInput(input)
++            .build()
++        val n = Notification.Builder(app, CHANNEL)
++            .setSmallIcon(R.drawable.ic_gateway)
++            .setContentTitle("Pair this phone")
++            .setContentText(text)
++            .setStyle(Notification.BigTextStyle().bigText(text))
++            .setOnlyAlertOnce(true)
++            .setOngoing(true)
++            .addAction(action)
++            .build()
++        manager(app).notify(ID, n)
++    }
++
++    /** Replaces the reply field with a plain message (also ends the "sending" spinner of the reply). */
++    fun status(ctx: Context, title: String, text: String) {
++        val app = ctx.applicationContext
++        val n = Notification.Builder(app, CHANNEL)
++            .setSmallIcon(R.drawable.ic_gateway)
++            .setContentTitle(title)
++            .setContentText(text)
++            .setStyle(Notification.BigTextStyle().bigText(text))
++            .setAutoCancel(true)
++            .setTimeoutAfter(60_000)
++            .build()
++        manager(app).notify(ID, n)
++    }
++
++    fun cancel(ctx: Context) {
++        ctx.getSystemService(NotificationManager::class.java).cancel(ID)
++    }
++}
+diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/PairingReceiver.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/PairingReceiver.kt
+new file mode 100644
+index 0000000..29cca70
+--- /dev/null
++++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/PairingReceiver.kt
+@@ -0,0 +1,31 @@
++package io.github.sparkcyf.voicesipagent.app
++
++import android.app.RemoteInput
++import android.content.BroadcastReceiver
++import android.content.Context
++import android.content.Intent
++
++/** Takes the code typed into the pairing notification and hands it to the helper connector. */
++class PairingReceiver : BroadcastReceiver() {
++    override fun onReceive(context: Context, intent: Intent) {
++        val code = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(PairingNotifier.KEY_CODE)?.toString().orEmpty()
++        val app = context.applicationContext
++        if (code.isBlank()) {
++            PairingNotifier.askForCode(app, "Type the 6-digit code from the Android pairing dialog.")
++            return
++        }
++        val pending = goAsync()
++        val rt = GatewayRuntime.get(app)
++        rt.shellHelper.submitPairingCode(code) { ok, message ->
++            try {
++                if (ok) PairingNotifier.status(app, "Phone paired", message)
++                else {
++                    AppLog.w("pairing failed: $message")
++                    PairingNotifier.askForCode(app, "$message\nOpen Pair device with pairing code again, then type the new code.")
++                }
++            } finally {
++                pending.finish()
++            }
++        }
++    }
++}
+diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/PrivilegedAudioOpener.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/PrivilegedAudioOpener.kt
+index d17981e..32a4b04 100644
+--- a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/PrivilegedAudioOpener.kt
++++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/PrivilegedAudioOpener.kt
+@@ -3,7 +3,7 @@ package io.github.sparkcyf.voicesipagent.app
+ import android.os.ParcelFileDescriptor
+ import io.github.sparkcyf.voicesipagent.privileged.CallAudioStatus
+ import io.github.sparkcyf.voicesipagent.privileged.PcmSocketPort
+-import io.github.sparkcyf.voicesipagent.privileged.ShizukuConnector
++import io.github.sparkcyf.voicesipagent.privileged.HelperConnector
+ import io.github.sparkcyf.voicesipagent.telephony.CallAudioHandle
+ import io.github.sparkcyf.voicesipagent.telephony.CallAudioOpener
+ import io.github.sparkcyf.voicesipagent.voice.PcmFormat
+@@ -15,9 +15,9 @@ import java.util.concurrent.ThreadPoolExecutor
+ import java.util.concurrent.TimeUnit
+ import java.util.concurrent.atomic.AtomicBoolean
+ 
+-/** Glue: the telephony layer's audio source, backed by the Shizuku shell service. */
++/** Glue: the telephony layer's audio source, backed by the shell helper service. */
+ class PrivilegedAudioOpener(
+-    private val shizuku: ShizukuConnector,
++    private val shellHelper: HelperConnector,
+     private val method: () -> Int,
+     private val muteEarpiece: () -> Boolean,
+     private val format: () -> PcmFormat,
+@@ -45,7 +45,7 @@ class PrivilegedAudioOpener(
+     }
+ 
+     fun refreshStatus() = synchronized(lock) {
+-        val svc = shizuku.service ?: return@synchronized helperDisconnected()
++        val svc = shellHelper.service ?: return@synchronized helperDisconnected()
+         val previous = _status.value
+         val reported = runCatching { CallAudioStatus.fromBundle(svc.callAudioStatus()) }.getOrElse {
+             publish(previous.copy(available = false))
+@@ -83,14 +83,14 @@ class PrivilegedAudioOpener(
+     fun retryRestoration() = synchronized(lock) {
+         refreshStatus()
+         if (_status.value.active || !_status.value.ownsOutputChange || !_status.value.available) return@synchronized
+-        runCatching { shizuku.service?.setLocalOutputMuted(false) }
++        runCatching { shellHelper.service?.setLocalOutputMuted(false) }
+         refreshStatus()
+     }
+ 
+     /** Confirm graceful restoration before the runtime drops the helper connection. */
+     fun closeForShutdown() = synchronized(lock) {
+         ++generation
+-        runCatching { shizuku.service?.closeCallAudio() }
++        runCatching { shellHelper.service?.closeCallAudio() }
+         markClosed()
+         refreshStatus()
+     }
+@@ -106,7 +106,7 @@ class PrivilegedAudioOpener(
+     }
+ 
+     override fun open(onLost: (String) -> Unit): CallAudioHandle = synchronized(lock) {
+-        val svc = shizuku.service ?: error("privileged service not connected (${shizuku.state})")
++        val svc = shellHelper.service ?: error("privileged service not connected (${shellHelper.state})")
+         val pcm = format()
+         val selectedMethod = method()
+         val suppressLocal = muteEarpiece()
+diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/SipRegistrationGate.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/SipRegistrationGate.kt
+index 6ff4ea3..7643fd7 100644
+--- a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/SipRegistrationGate.kt
++++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/SipRegistrationGate.kt
+@@ -6,7 +6,7 @@ package io.github.sparkcyf.voicesipagent.app
+  *
+  * Until the cellular side has been ready once in this gateway run, SIP is held: startup and
+  * switch-on never register and then unregister again. After that, a loss of readiness must last
+- * [graceMs] before the hold starts, so brief Shizuku reconnects or health polls do not flap the
++ * [graceMs] before the hold starts, so brief helper reconnects or health polls do not flap the
+  * registration. Readiness lifts the hold at once. The caller defers applying a decision while
+  * calls or a bridge session exist. Not thread-safe; the runtime uses it on its executor.
+  */
+diff --git a/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayRuntimeLifecycleTest.kt b/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayRuntimeLifecycleTest.kt
+index c7c73f7..13bab1d 100644
+--- a/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayRuntimeLifecycleTest.kt
++++ b/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayRuntimeLifecycleTest.kt
+@@ -24,7 +24,7 @@ import io.github.sparkcyf.voicesipagent.privileged.AudioMethod
+ import io.github.sparkcyf.voicesipagent.privileged.DialerRoleResult
+ import io.github.sparkcyf.voicesipagent.privileged.IPrivilegedService
+ import io.github.sparkcyf.voicesipagent.privileged.HealthKeys
+-import io.github.sparkcyf.voicesipagent.privileged.ShizukuConnector
++import io.github.sparkcyf.voicesipagent.privileged.HelperConnector
+ import io.github.sparkcyf.voicesipagent.telephony.CallSnapshot
+ import io.github.sparkcyf.voicesipagent.telephony.CellularEndpoint
+ import io.github.sparkcyf.voicesipagent.telephony.SimSlots
+@@ -463,7 +463,7 @@ class GatewayRuntimeLifecycleTest {
+         holdSip: Boolean = false, healthy: Boolean = false) : AutoCloseable {
+         private val scopes = mutableListOf<AutoCloseable>()
+         private val workerScopes = mutableListOf<AutoCloseable>()
+-        lateinit var connector: ShizukuConnector
++        lateinit var connector: HelperConnector
+             private set
+         lateinit var endpoints: MockedConstruction<PjsipEndpoint>
+             private set
+@@ -473,8 +473,8 @@ class GatewayRuntimeLifecycleTest {
+             private set
+         lateinit var callsChanged: (CallSnapshot) -> Unit
+             private set
+-        private var listener: ShizukuConnector.Listener? = null
+-        private var helperState = ShizukuConnector.State.STOPPED
++        private var listener: HelperConnector.Listener? = null
++        private var helperState = HelperConnector.State.STOPPED
+         var sipListener: EndpointStatusListener? = null
+             private set
+         lateinit var dialPolicy: DialPolicy
+@@ -530,15 +530,15 @@ class GatewayRuntimeLifecycleTest {
+                 doAnswer { callsChanged = it.getArgument(0); null }.`when`(endpoint).onCallsChanged = any()
+                 doReturn(mock(SimSlots::class.java)).`when`(endpoint).sims
+             }
+-            scopes += mockConstruction(ShizukuConnector::class.java) { mock, _ ->
++            scopes += mockConstruction(HelperConnector::class.java) { mock, _ ->
+                 connector = mock
+                 `when`(mock.state).thenAnswer { helperState }
+-                `when`(mock.service).thenAnswer { if (helperState == ShizukuConnector.State.CONNECTED) helper else null }
++                `when`(mock.service).thenAnswer { if (helperState == HelperConnector.State.CONNECTED) helper else null }
+                 `when`(mock.detail).thenReturn("")
+                 doAnswer { listener = it.getArgument(0); null }.`when`(mock).addListener(
+-                    any(ShizukuConnector.Listener::class.java) ?: ShizukuConnector.Listener { _, _ -> })
+-                doAnswer { transition(ShizukuConnector.State.BINDING); null }.`when`(mock).start()
+-                doAnswer { transition(ShizukuConnector.State.STOPPED); null }.`when`(mock).stop()
++                    any(HelperConnector.Listener::class.java) ?: HelperConnector.Listener { _, _ -> })
++                doAnswer { transition(HelperConnector.State.BINDING); null }.`when`(mock).start()
++                doAnswer { transition(HelperConnector.State.STOPPED); null }.`when`(mock).stop()
+             }
+             val constructor = GatewayRuntime::class.java.getDeclaredConstructor(Context::class.java)
+             constructor.isAccessible = true
+@@ -580,7 +580,7 @@ class GatewayRuntimeLifecycleTest {
+             `when`(bundle.containsKey("user_id")).thenReturn(true)
+             `when`(bundle.containsKey("in_call")).thenReturn(true)
+         }
+-        private fun transition(state: ShizukuConnector.State) {
++        private fun transition(state: HelperConnector.State) {
+             helperState = state
+             listener?.onChanged(state, connector.service)
+         }
+@@ -591,7 +591,7 @@ class GatewayRuntimeLifecycleTest {
+         }
+         fun connect() {
+             promote()
+-            transition(ShizukuConnector.State.CONNECTED)
++            transition(HelperConnector.State.CONNECTED)
+             drain()
+         }
+         fun sipStatus(status: EndpointStatus) {
+diff --git a/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayServicePolicyTest.kt b/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayServicePolicyTest.kt
+index 3e9a77c..1a0c878 100644
+--- a/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayServicePolicyTest.kt
++++ b/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayServicePolicyTest.kt
+@@ -3,7 +3,7 @@ package io.github.sparkcyf.voicesipagent.app
+ import android.content.Context
+ import android.content.Intent
+ import io.github.sparkcyf.voicesipagent.privileged.CallAccess
+-import io.github.sparkcyf.voicesipagent.privileged.ShizukuConnector
++import io.github.sparkcyf.voicesipagent.privileged.HelperConnector
+ import io.github.sparkcyf.voicesipagent.telephony.CallSnapshot
+ import org.junit.Assert.assertEquals
+ import org.junit.Assert.assertFalse
+@@ -38,11 +38,13 @@ class GatewayServicePolicyTest {
+         assertTrue(lost.copy(calls = CallSnapshot(), session = "SIP call finishing").needsForegroundService)
+     }
+ 
+-    @Test fun notificationTellsUserToTapAfterRestartingShizuku() {
+-        val down = HealthState(takeover = true, shizuku = ShizukuConnector.State.SHIZUKU_NOT_RUNNING)
+-        assertEquals("Shizuku is not running. Start Shizuku, then tap here to reconnect.", GatewayService.summary(down))
+-        val binding = down.copy(shizuku = ShizukuConnector.State.BINDING)
+-        assertEquals("Setup needed · Shizuku binding", GatewayService.summary(binding))
++    @Test fun notificationTellsUserHowToReconnectTheHelper() {
++        val down = HealthState(takeover = true, shellHelper = HelperConnector.State.NOT_RUNNING)
++        assertEquals("Helper not connected. Turn on Wireless debugging and tap here to reconnect.", GatewayService.summary(down))
++        val pairing = down.copy(shellHelper = HelperConnector.State.PAIRING_REQUIRED)
++        assertEquals("Pairing needed. Tap here, then Pair this phone.", GatewayService.summary(pairing))
++        val binding = down.copy(shellHelper = HelperConnector.State.BINDING)
++        assertEquals("Setup needed · helper binding", GatewayService.summary(binding))
+         assertEquals("Call takeover off", GatewayService.summary(down.copy(takeover = false)))
+         assertEquals("In call · s", GatewayService.summary(down.copy(session = "s")))
+     }
+diff --git a/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/PrivilegedAudioOpenerTest.kt b/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/PrivilegedAudioOpenerTest.kt
+index 29c9c03..0617340 100644
+--- a/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/PrivilegedAudioOpenerTest.kt
++++ b/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/PrivilegedAudioOpenerTest.kt
+@@ -7,7 +7,7 @@ import io.github.sparkcyf.voicesipagent.privileged.AudioMethod
+ import io.github.sparkcyf.voicesipagent.privileged.CallAudioStatus
+ import io.github.sparkcyf.voicesipagent.privileged.IPrivilegedService
+ import io.github.sparkcyf.voicesipagent.privileged.PcmSocketPort
+-import io.github.sparkcyf.voicesipagent.privileged.ShizukuConnector
++import io.github.sparkcyf.voicesipagent.privileged.HelperConnector
+ import io.github.sparkcyf.voicesipagent.voice.PcmFormat
+ import org.junit.After
+ import org.junit.Assert.*
+@@ -21,7 +21,7 @@ import java.util.concurrent.Executors
+ import java.util.concurrent.TimeUnit
+ 
+ class PrivilegedAudioOpenerTest {
+-    private val connector = mock(ShizukuConnector::class.java)
++    private val connector = mock(HelperConnector::class.java)
+     private val service = mock(IPrivilegedService::class.java)
+     private val pfd = mock(ParcelFileDescriptor::class.java)
+     private val port = mock(PcmSocketPort::class.java)
+diff --git a/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/ShizukuConnectorLifecycleTest.kt b/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/ShizukuConnectorLifecycleTest.kt
+deleted file mode 100644
+index e4fe938..0000000
+--- a/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/ShizukuConnectorLifecycleTest.kt
++++ /dev/null
+@@ -1,115 +0,0 @@
+-package io.github.sparkcyf.voicesipagent.app
+-
+-import android.content.ComponentName
+-import android.content.Context
+-import android.content.ServiceConnection
+-import android.content.pm.PackageInfo
+-import android.content.pm.PackageManager
+-import android.os.Handler
+-import android.os.IBinder
+-import android.os.Looper
+-import io.github.sparkcyf.voicesipagent.privileged.IPrivilegedService
+-import io.github.sparkcyf.voicesipagent.privileged.ShizukuConnector
+-import org.junit.Assert.*
+-import org.junit.Test
+-import org.mockito.Mockito.*
+-import rikka.shizuku.Shizuku
+-
+-class ShizukuConnectorLifecycleTest {
+-    @Test fun helperDisconnectRebindsAfterTheSdkFinishesItsCallback() = Fixture().use { f ->
+-        f.connect(0)
+-        f.disconnect(0)
+-        assertEquals(ShizukuConnector.State.ERROR, f.connector.state)
+-        assertEquals(1, f.connections.size)
+-        f.drain()
+-        assertEquals(2, f.connections.size)
+-        f.connect(1)
+-        assertEquals(ShizukuConnector.State.CONNECTED, f.connector.state)
+-    }
+-
+-    @Test fun serverRestartAndLateOldConnectionCallbacksDoNotBlockOrReplaceTheNewBinding() = Fixture().use { f ->
+-        f.connect(0)
+-        f.serverUp = false
+-        f.died.onBinderDead()
+-        f.disconnect(0)
+-        f.serverUp = true
+-        f.received.onBinderReceived()
+-        f.disconnect(0)
+-        f.drain()
+-        assertEquals(2, f.connections.size)
+-        f.connect(1)
+-        f.connect(0, -1)
+-        assertEquals(ShizukuConnector.State.CONNECTED, f.connector.state)
+-    }
+-
+-    @Test fun stoppingBeforeDeferredRebindDoesNotRestartHelper() = Fixture().use { f ->
+-        f.connect(0)
+-        f.disconnect(0)
+-        f.connector.stop()
+-        f.drain()
+-        assertEquals(1, f.connections.size)
+-        assertEquals(ShizukuConnector.State.STOPPED, f.connector.state)
+-    }
+-
+-    private class Fixture : AutoCloseable {
+-        private val scopes = mutableListOf<AutoCloseable>()
+-        private val posted = ArrayDeque<Runnable>()
+-        val connections = mutableListOf<ServiceConnection>()
+-        var serverUp = true
+-        lateinit var received: Shizuku.OnBinderReceivedListener
+-        lateinit var died: Shizuku.OnBinderDeadListener
+-        val connector: ShizukuConnector
+-
+-        init {
+-            scopes += mockConstruction(ComponentName::class.java)
+-            scopes += mockStatic(Looper::class.java)
+-            scopes += mockConstruction(Handler::class.java) { handler, _ ->
+-                doAnswer { posted.addLast(it.getArgument(0)); true }.`when`(handler).post(any(Runnable::class.java))
+-            }
+-            // Prevent Shizuku's static Binder instance from calling Android stub methods.
+-            scopes += mockConstruction(Class.forName("rikka.shizuku.Shizuku\$1"))
+-            val shizuku = mockStatic(Shizuku::class.java)
+-            scopes += shizuku
+-            shizuku.`when`<Boolean> { Shizuku.pingBinder() }.thenAnswer { serverUp }
+-            shizuku.`when`<Int> { Shizuku.getVersion() }.thenReturn(13)
+-            shizuku.`when`<Int> { Shizuku.checkSelfPermission() }.thenReturn(PackageManager.PERMISSION_GRANTED)
+-            shizuku.`when`<Unit> { Shizuku.addBinderReceivedListenerSticky(any()) }.thenAnswer {
+-                received = it.getArgument(0)
+-                received.onBinderReceived()
+-                null
+-            }
+-            shizuku.`when`<Unit> { Shizuku.addBinderDeadListener(any()) }.thenAnswer {
+-                died = it.getArgument(0)
+-                null
+-            }
+-            shizuku.`when`<Unit> { Shizuku.bindUserService(any(), any()) }.thenAnswer {
+-                connections += it.getArgument<ServiceConnection>(1)
+-                null
+-            }
+-            val context = mock(Context::class.java)
+-            val pm = mock(PackageManager::class.java)
+-            `when`(context.applicationContext).thenReturn(context)
+-            `when`(context.packageName).thenReturn("gateway")
+-            `when`(context.packageManager).thenReturn(pm)
+-            `when`(pm.getPackageInfo("gateway", 0)).thenReturn(PackageInfo())
+-            connector = ShizukuConnector(context) {}
+-            connector.start()
+-        }
+-
+-        fun connect(index: Int, uid: Int = 2000) {
+-            val service = mock(IPrivilegedService::class.java)
+-            val binder = mock(IBinder::class.java)
+-            `when`(service.uid).thenReturn(uid)
+-            `when`(service.asBinder()).thenReturn(binder)
+-            `when`(binder.pingBinder()).thenReturn(true)
+-            `when`(binder.queryLocalInterface(anyString())).thenReturn(service)
+-            connections[index].onServiceConnected(mock(ComponentName::class.java), binder)
+-        }
+-        fun disconnect(index: Int) = connections[index].onServiceDisconnected(mock(ComponentName::class.java))
+-        fun drain() { while (posted.isNotEmpty()) posted.removeFirst().run() }
+-        override fun close() {
+-            connector.stop()
+-            scopes.asReversed().forEach { it.close() }
+-        }
+-    }
+-}
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index 4cea406..5a48112 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -5,7 +5,9 @@ coroutines = "1.11.0"
+ coreKtx = "1.19.1"
+ activityCompose = "1.13.0"
+ composeBom = "2026.09.00"
+-shizuku = "13.1.5"
++libadb = "3.1.1"
++sunSecurity = "1.1"
++conscrypt = "2.5.3"
+ junit = "4.13.2"
+ mockito = "5.24.0"
+ androidJson = "0.0.20131108.vaadin1"
+@@ -20,8 +22,10 @@ androidx-activity-compose = { group = "androidx.activity", name = "activity-comp
+ androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+ androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
+ androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+-shizuku-api = { group = "dev.rikka.shizuku", name = "api", version.ref = "shizuku" }
+-shizuku-provider = { group = "dev.rikka.shizuku", name = "provider", version.ref = "shizuku" }
++# JitPack coordinates (see settings.gradle.kts); versions as documented by the library.
++libadb = { group = "com.github.MuntashirAkon", name = "libadb-android", version.ref = "libadb" }
++sun-security-android = { group = "com.github.MuntashirAkon", name = "sun-security-android", version.ref = "sunSecurity" }
++conscrypt-android = { group = "org.conscrypt", name = "conscrypt-android", version.ref = "conscrypt" }
+ junit = { group = "junit", name = "junit", version.ref = "junit" }
+ mockito-core = { group = "org.mockito", name = "mockito-core", version.ref = "mockito" }
+ # Android's own org.json implementation, for JVM tests (android.jar only has stubs).
+diff --git a/privileged/build.gradle.kts b/privileged/build.gradle.kts
+index 54df6ca..cfd41ff 100644
+--- a/privileged/build.gradle.kts
++++ b/privileged/build.gradle.kts
+@@ -22,7 +22,10 @@ android {
+ 
+ dependencies {
+     api(project(":voice-api"))
+-    api(libs.shizuku.api)
+-    implementation(libs.shizuku.provider)
++    // In-app ADB client (wireless debugging pairing + connection), replacing the Shizuku app.
++    implementation(libs.libadb)
++    implementation(libs.sun.security.android)
++    // Bundled Conscrypt: TLS 1.3 key export for ADB pairing without hidden-API access.
++    implementation(libs.conscrypt.android)
+     testImplementation(libs.junit)
+ }
+diff --git a/privileged/consumer-rules.pro b/privileged/consumer-rules.pro
+index 6fa8e01..d2954ab 100644
+--- a/privileged/consumer-rules.pro
++++ b/privileged/consumer-rules.pro
+@@ -1,7 +1,18 @@
+-# Shizuku loads this Binder service from the APK in a separate app_process and
+-# invokes its Context constructor reflectively. Manifest keep rules do not cover it.
++# The helper runs from this APK in a separate app_process that the app starts over wireless ADB.
++# It instantiates PrivilegedService reflectively through its Context constructor and starts at
++# HelperMain.main. Manifest keep rules do not cover either.
+ -keep class io.github.sparkcyf.voicesipagent.privileged.shell.PrivilegedService {
+     public <init>(android.content.Context);
+ }
++-keep class io.github.sparkcyf.voicesipagent.privileged.shell.HelperMain {
++    public static void main(java.lang.String[]);
++}
++# The ADB client library finds Conscrypt and its certificate helpers by name.
++-keep class org.conscrypt.** { *; }
++-dontwarn org.conscrypt.**
++-keep class io.github.muntashirakon.adb.** { *; }
++-keep class android.sun.** { *; }
++-dontwarn android.sun.**
++-dontwarn org.bouncycastle.**
+ # AGP merges dependency consumer rules. Ordinary API calls and AIDL dispatch are
+-# visible to R8; do not keep the entire Shizuku/privileged packages.
++# visible to R8; do not keep the entire privileged package.
+diff --git a/privileged/src/main/AndroidManifest.xml b/privileged/src/main/AndroidManifest.xml
+index ed3c2b5..79ad727 100644
+--- a/privileged/src/main/AndroidManifest.xml
++++ b/privileged/src/main/AndroidManifest.xml
+@@ -1,7 +1,13 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+-    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+-    <queries>
+-        <package android:name="moe.shizuku.privileged.api" />
+-    </queries>
++    <application>
++        <!-- Receives the privileged helper's binder. Only the shell user can reach it: the permission
++             below is held by shell, and the provider also checks the caller uid and a one-time token. -->
++        <provider
++            android:name="io.github.sparkcyf.voicesipagent.privileged.HelperBinderProvider"
++            android:authorities="${applicationId}.helper"
++            android:exported="true"
++            android:multiprocess="false"
++            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
++    </application>
+ </manifest>
+diff --git a/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/AdbKeys.kt b/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/AdbKeys.kt
+new file mode 100644
+index 0000000..4ba35cf
+--- /dev/null
++++ b/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/AdbKeys.kt
+@@ -0,0 +1,115 @@
++package io.github.sparkcyf.voicesipagent.privileged
++
++import android.content.Context
++import android.os.Build
++import android.sun.security.x509.AlgorithmId
++import android.sun.security.x509.CertificateAlgorithmId
++import android.sun.security.x509.CertificateExtensions
++import android.sun.security.x509.CertificateIssuerName
++import android.sun.security.x509.CertificateSerialNumber
++import android.sun.security.x509.CertificateSubjectName
++import android.sun.security.x509.CertificateValidity
++import android.sun.security.x509.CertificateVersion
++import android.sun.security.x509.CertificateX509Key
++import android.sun.security.x509.KeyIdentifier
++import android.sun.security.x509.PrivateKeyUsageExtension
++import android.sun.security.x509.SubjectKeyIdentifierExtension
++import android.sun.security.x509.X500Name
++import android.sun.security.x509.X509CertImpl
++import android.sun.security.x509.X509CertInfo
++import io.github.muntashirakon.adb.AbsAdbConnectionManager
++import java.io.File
++import java.security.KeyFactory
++import java.security.KeyPairGenerator
++import java.security.MessageDigest
++import java.security.PrivateKey
++import java.security.SecureRandom
++import java.security.cert.Certificate
++import java.security.cert.CertificateFactory
++import java.security.spec.PKCS8EncodedKeySpec
++import java.util.Date
++import java.util.Random
++
++/**
++ * This app's ADB identity: an RSA key and a self-signed certificate kept in the app's private
++ * storage. Wireless-debugging pairing registers the public key with adbd once; later connections
++ * authenticate with the same key. Never call close() on this manager: it destroys the private key.
++ */
++internal class AdbKeys private constructor(
++    private val keyData: PrivateKey,
++    private val certData: Certificate,
++) : AbsAdbConnectionManager() {
++
++    /** Identifies this key pair, so a pairing record is never trusted for a regenerated key. */
++    val fingerprint: String = MessageDigest.getInstance("SHA-256").digest(certData.encoded)
++        .joinToString("") { "%02x".format(it) }
++
++    init {
++        setApi(Build.VERSION.SDK_INT)
++    }
++
++    override fun getPrivateKey(): PrivateKey = keyData
++
++    override fun getCertificate(): Certificate = certData
++
++    override fun getDeviceName(): String = DEVICE_NAME
++
++    companion object {
++        private const val DEVICE_NAME = "Voice SIP Agent"
++        private const val KEY_FILE = "adb_private.key"
++        private const val CERT_FILE = "adb_cert.der"
++        private const val TEN_YEARS_MS = 10L * 365 * 24 * 60 * 60 * 1000
++
++        @Volatile private var instance: AdbKeys? = null
++
++        fun get(context: Context): AdbKeys =
++            instance ?: synchronized(this) {
++                instance ?: load(context.applicationContext).also { instance = it }
++            }
++
++        private fun load(context: Context): AdbKeys {
++            val keyFile = File(context.filesDir, KEY_FILE)
++            val certFile = File(context.filesDir, CERT_FILE)
++            if (keyFile.isFile && certFile.isFile) {
++                try {
++                    val key = KeyFactory.getInstance("RSA").generatePrivate(PKCS8EncodedKeySpec(keyFile.readBytes()))
++                    val cert = certFile.inputStream().use { CertificateFactory.getInstance("X.509").generateCertificate(it) }
++                    return AdbKeys(key, cert)
++                } catch (e: Exception) {
++                    // Unreadable or corrupt: fall through and create a new identity (pairing is then required again).
++                }
++            }
++            val generated = generate()
++            keyFile.writeBytes(generated.first.encoded)
++            certFile.writeBytes(generated.second.encoded)
++            return AdbKeys(generated.first, generated.second)
++        }
++
++        private fun generate(): Pair<PrivateKey, Certificate> {
++            val generator = KeyPairGenerator.getInstance("RSA")
++            generator.initialize(2048, SecureRandom())
++            val pair = generator.generateKeyPair()
++            val publicKey = pair.public
++            val privateKey = pair.private
++            val algorithm = "SHA512withRSA"
++            val notBefore = Date()
++            val notAfter = Date(System.currentTimeMillis() + TEN_YEARS_MS)
++            val subject = X500Name("CN=$DEVICE_NAME")
++            val extensions = CertificateExtensions()
++            extensions.set("SubjectKeyIdentifier", SubjectKeyIdentifierExtension(KeyIdentifier(publicKey).identifier))
++            extensions.set("PrivateKeyUsage", PrivateKeyUsageExtension(notBefore, notAfter))
++            val info = X509CertInfo()
++            info.set("version", CertificateVersion(2))
++            info.set("serialNumber", CertificateSerialNumber(Random().nextInt() and Int.MAX_VALUE))
++            info.set("algorithmID", CertificateAlgorithmId(AlgorithmId.get(algorithm)))
++            info.set("subject", CertificateSubjectName(subject))
++            info.set("key", CertificateX509Key(publicKey))
++            info.set("validity", CertificateValidity(notBefore, notAfter))
++            info.set("issuer", CertificateIssuerName(subject))
++            info.set("extensions", extensions)
++            val certificate = X509CertImpl(info)
++            certificate.sign(privateKey, algorithm)
++            return Pair(privateKey, certificate)
++        }
++    }
++}
+diff --git a/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/HelperBinderProvider.kt b/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/HelperBinderProvider.kt
+new file mode 100644
+index 0000000..22bf8ba
+--- /dev/null
++++ b/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/HelperBinderProvider.kt
+@@ -0,0 +1,43 @@
++package io.github.sparkcyf.voicesipagent.privileged
++
++import android.content.ContentProvider
++import android.content.ContentValues
++import android.database.Cursor
++import android.net.Uri
++import android.os.Binder
++import android.os.Bundle
++import android.util.Log
++import io.github.sparkcyf.voicesipagent.privileged.shell.ProviderBridge
++
++/**
++ * Receives the privileged helper's binder. Only the shell user can reach it: the manifest requires
++ * INTERACT_ACROSS_USERS_FULL, and the call also checks the caller uid and a one-time token that the
++ * app put on the helper's command line.
++ */
++class HelperBinderProvider : ContentProvider() {
++    override fun onCreate(): Boolean = true
++
++    override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
++        if (method != ProviderBridge.METHOD_SEND_BINDER || extras == null) return null
++        val uid = Binder.getCallingUid()
++        if (uid != SHELL_UID && uid != ROOT_UID) {
++            Log.w(TAG, "rejected binder offer from uid $uid")
++            return null
++        }
++        val binder = extras.getBinder(ProviderBridge.KEY_BINDER) ?: return null
++        val token = HelperConnector.deliver(binder, extras.getString(ProviderBridge.KEY_NONCE)) ?: return null
++        return Bundle().apply { putBinder(ProviderBridge.KEY_TOKEN, token) }
++    }
++
++    override fun query(uri: Uri, projection: Array<String>?, selection: String?, selectionArgs: Array<String>?, sortOrder: String?): Cursor? = null
++    override fun getType(uri: Uri): String? = null
++    override fun insert(uri: Uri, values: ContentValues?): Uri? = null
++    override fun delete(uri: Uri, selection: String?, selectionArgs: Array<String>?): Int = 0
++    override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<String>?): Int = 0
++
++    private companion object {
++        const val TAG = "VsaHelperProvider"
++        const val SHELL_UID = 2000
++        const val ROOT_UID = 0
++    }
++}
+diff --git a/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/HelperConnector.kt b/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/HelperConnector.kt
+new file mode 100644
+index 0000000..8363621
+--- /dev/null
++++ b/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/HelperConnector.kt
+@@ -0,0 +1,428 @@
++package io.github.sparkcyf.voicesipagent.privileged
++
++import android.content.Context
++import android.os.Binder
++import android.os.IBinder
++import android.provider.Settings
++import io.github.muntashirakon.adb.AbsAdbConnectionManager
++import io.github.muntashirakon.adb.AdbPairingRequiredException
++import io.github.muntashirakon.adb.android.AdbMdns
++import io.github.sparkcyf.voicesipagent.privileged.shell.HelperMain
++import java.security.SecureRandom
++import java.util.concurrent.CopyOnWriteArrayList
++import java.util.concurrent.CountDownLatch
++import java.util.concurrent.Executors
++import java.util.concurrent.ScheduledExecutorService
++import java.util.concurrent.ScheduledFuture
++import java.util.concurrent.TimeUnit
++
++/**
++ * App-side lifecycle of the privileged helper, with no Shizuku involved. The app talks to adbd over
++ * Android's wireless debugging: it pairs once (the user types a 6-digit code), then on every start it
++ * connects, launches [HelperMain] as the shell user (uid 2000) and receives the helper's binder back
++ * through [HelperBinderProvider]. The ADB session is closed as soon as the helper is up. After a
++ * reboot it repeats this by itself: it turns Wireless debugging back on through WRITE_SECURE_SETTINGS,
++ * which it grants itself over ADB the first time.
++ *
++ * States: [State.PAIRING_REQUIRED] until a pairing exists, [State.BINDING] while connecting,
++ * [State.NOT_RUNNING] when a try failed (it retries with a growing delay), [State.CONNECTED] when the
++ * helper is bound.
++ */
++class HelperConnector(context: Context, private val log: (String) -> Unit) {
++    enum class State { STOPPED, NOT_RUNNING, PAIRING_REQUIRED, PAIRING_FAILED, BINDING, CONNECTED, ERROR }
++
++    fun interface Listener {
++        fun onChanged(state: State, service: IPrivilegedService?)
++    }
++
++    private val app = context.applicationContext
++    private val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
++    private val listeners = CopyOnWriteArrayList<Listener>()
++    private val exec: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { r ->
++        Thread(r, "vsa-helper-link").apply { isDaemon = true }
++    }
++    private val appToken = Binder()
++
++    @Volatile var state = State.NOT_RUNNING; private set
++    @Volatile var service: IPrivilegedService? = null; private set
++    @Volatile var detail: String = ""; private set
++    @Volatile private var started = false
++
++    private var generation = 0L
++    private var pending: ScheduledFuture<*>? = null
++    private var backoffMs = FIRST_RETRY_MS
++
++    // Binder hand-off from HelperBinderProvider (binder thread) to the connect attempt (executor thread).
++    @Volatile private var nonce: String? = null
++    @Volatile private var incomingBinder: IBinder? = null
++    @Volatile private var incomingLatch: CountDownLatch? = null
++
++    private var linked: IBinder? = null
++    private val death = IBinder.DeathRecipient { exec.execute(Runnable { onHelperDied() }) }
++
++    // Pairing discovery (the pairing port changes every time the Settings dialog opens).
++    private var pairingMdns: AdbMdns? = null
++    @Volatile private var pairingHost: String? = null
++    @Volatile private var pairingPort = 0
++
++    @Synchronized
++    fun start() {
++        if (started) return
++        started = true
++        generation++
++        active = this
++        scheduleAttempt(0)
++    }
++
++    /** Stops retrying and ends the helper process; the pairing stays valid. */
++    fun stop() {
++        val svc: IPrivilegedService?
++        synchronized(this) {
++            if (!started && state == State.STOPPED) return
++            started = false
++            generation++
++            pending?.cancel(false)
++            pending = null
++            if (active === this) active = null
++            svc = service
++            unlink()
++            service = null
++        }
++        stopPairingDiscovery()
++        runCatching { svc?.closeCallAudio() }.onFailure { log("helper: audio cleanup failed: ${it.message}") }
++        // The helper exits while answering, so this call may fail with a dead-object error.
++        runCatching { svc?.destroy() }
++        set(State.STOPPED, null, "takeover off")
++    }
++
++    fun addListener(l: Listener) {
++        listeners.addIfAbsent(l)
++        l.onChanged(state, service)
++    }
++
++    fun removeListener(l: Listener) {
++        listeners.remove(l)
++    }
++
++    /** True once this phone has been paired, so the helper can be restarted without the user. Cheap: safe on the UI thread. */
++    fun canRestart(): Boolean = prefs.contains(KEY_PAIRED_FOR)
++
++    /** The pairing only counts for the key it was made with (a regenerated key is unknown to adbd). */
++    private fun pairedForCurrentKey(): Boolean = prefs.getString(KEY_PAIRED_FOR, null) == AdbKeys.get(app).fingerprint
++
++    /** Tries again now (skips the retry delay). */
++    fun reconnectNow() {
++        synchronized(this) {
++            if (!started || state == State.CONNECTED || state == State.BINDING) return
++            backoffMs = FIRST_RETRY_MS
++        }
++        scheduleAttempt(0)
++    }
++
++    /** Starts listening for the pairing service that Settings advertises while its pairing dialog is open. */
++    fun beginPairing() {
++        exec.execute(Runnable { startPairingDiscovery() })
++    }
++
++    /**
++     * Pairs with the code typed by the user: "123456", or "PORT 123456" when the pairing service
++     * was not discovered automatically. [onResult] runs on the helper thread.
++     */
++    fun submitPairingCode(input: String, onResult: (Boolean, String) -> Unit) {
++        exec.execute(Runnable {
++            val problem = try {
++                pairNow(input)
++            } catch (t: Throwable) {
++                "Pairing failed: ${t.message ?: t.javaClass.simpleName}"
++            }
++            if (problem == null) {
++                log("helper: paired")
++                val runAfter: Boolean
++                synchronized(this) {
++                    runAfter = started
++                    backoffMs = FIRST_RETRY_MS
++                }
++                if (runAfter) {
++                    set(State.NOT_RUNNING, null, "paired, starting the helper")
++                    scheduleAttempt(500)
++                }
++                onResult(true, "Paired. Starting the helper.")
++            } else {
++                log("helper: $problem")
++                if (started) set(State.PAIRING_FAILED, null, problem)
++                onResult(false, problem)
++            }
++        })
++    }
++
++    // ---- connect + start ----------------------------------------------------------------------
++
++    @Synchronized
++    private fun scheduleAttempt(delayMs: Long) {
++        if (!started) return
++        pending?.cancel(false)
++        val epoch = generation
++        pending = exec.schedule(Runnable { attempt(epoch) }, delayMs, TimeUnit.MILLISECONDS)
++    }
++
++    @Synchronized
++    private fun isCurrent(epoch: Long) = started && generation == epoch
++
++    private fun attempt(epoch: Long) {
++        try {
++            if (!isCurrent(epoch)) return
++            if (service?.asBinder()?.pingBinder() == true) return
++            if (!pairedForCurrentKey()) {
++                set(State.PAIRING_REQUIRED, null, "pair this phone once with Wireless debugging")
++                return
++            }
++            set(State.BINDING, null, "connecting to Wireless debugging")
++            val failure = try {
++                connectAndStart(epoch)
++            } catch (e: AdbPairingRequiredException) {
++                prefs.edit().remove(KEY_PAIRED_FOR).apply()
++                set(State.PAIRING_REQUIRED, null, "pairing was removed in Developer options: pair again")
++                return
++            } catch (e: InterruptedException) {
++                "Wireless debugging not found. Turn it on in Developer options and connect to Wi-Fi"
++            } catch (e: Exception) {
++                "Wireless debugging connection failed: ${e.message ?: e.javaClass.simpleName}"
++            }
++            if (!isCurrent(epoch)) return
++            if (failure == null) {
++                backoffMs = FIRST_RETRY_MS
++            } else {
++                set(State.NOT_RUNNING, null, failure)
++                val delay = backoffMs
++                backoffMs = minOf(backoffMs * 2, MAX_RETRY_MS)
++                scheduleAttempt(delay)
++            }
++        } catch (t: Throwable) {
++            log("helper: attempt crashed: $t")
++            if (isCurrent(epoch)) {
++                set(State.ERROR, null, "unexpected error: ${t.message ?: t.javaClass.simpleName}")
++                scheduleAttempt(MAX_RETRY_MS)
++            }
++        }
++    }
++
++    /** Returns null on success (state is then CONNECTED), otherwise the reason it failed. */
++    private fun connectAndStart(epoch: Long): String? {
++        enableWirelessDebugging()
++        val adb = AdbKeys.get(app)
++        adb.setTimeout(20, TimeUnit.SECONDS)
++        try {
++            if (!connectToAdbd(adb)) return "Could not reach Wireless debugging. Turn it on in Developer options and connect to Wi-Fi"
++            val token = newNonce()
++            val latch = CountDownLatch(1)
++            synchronized(this) {
++                nonce = token
++                incomingBinder = null
++                incomingLatch = latch
++            }
++            runShell(adb, starterCommand(token), STARTER_WAIT_MS)
++            val arrived = latch.await(BINDER_WAIT_MS, TimeUnit.MILLISECONDS)
++            val binder = incomingBinder
++            if (!arrived || binder == null) {
++                val tail = runShell(adb, "tail -n 12 $HELPER_LOG 2>&1", 5_000).trim()
++                log("helper: no binder from the helper. log: $tail")
++                return "The helper did not start" + if (tail.isNotEmpty()) ": " + tail.lineSequence().last().take(160) else ""
++            }
++            if (!isCurrent(epoch)) return "stopped"
++            return adopt(binder)
++        } finally {
++            synchronized(this) { nonce = null; incomingLatch = null }
++            runCatching { adb.disconnect() }
++        }
++    }
++
++    private fun adopt(binder: IBinder): String? {
++        val svc = IPrivilegedService.Stub.asInterface(binder)
++        val uid = try { svc.uid } catch (e: Exception) { -1 }
++        if (uid != 2000 && uid != 0) return "unexpected privileged uid $uid"
++        synchronized(this) {
++            unlink()
++            try {
++                binder.linkToDeath(death, 0)
++                linked = binder
++            } catch (e: Exception) {
++                return "helper died while starting"
++            }
++        }
++        set(State.CONNECTED, svc, "uid $uid")
++        return null
++    }
++
++    private fun onHelperDied() {
++        val restart: Boolean
++        synchronized(this) {
++            restart = started
++            unlink()
++            service = null
++        }
++        if (!restart) return
++        log("helper: process ended")
++        set(State.NOT_RUNNING, null, "helper process ended, reconnecting")
++        scheduleAttempt(1000)
++    }
++
++    @Synchronized
++    private fun unlink() {
++        linked?.let { runCatching { it.unlinkToDeath(death, 0) } }
++        linked = null
++    }
++
++    /** Called on a binder thread by [HelperBinderProvider]; returns the token the helper watches, or null to refuse. */
++    private fun accept(binder: IBinder, offered: String?): IBinder? {
++        val expected = nonce
++        if (!started || expected == null || offered != expected) {
++            log("helper: refused a binder offer")
++            return null
++        }
++        incomingBinder = binder
++        incomingLatch?.countDown()
++        return appToken
++    }
++
++    private fun connectToAdbd(adb: AbsAdbConnectionManager): Boolean {
++        val port = tlsPortFromProperty()
++        if (port > 0) {
++            try {
++                if (adb.connect("127.0.0.1", port) || adb.isConnected) return true
++            } catch (e: AdbPairingRequiredException) {
++                throw e
++            } catch (e: Exception) {
++                log("helper: direct connect failed (${e.message}); trying discovery")
++            }
++        }
++        return adb.connectTls(app, DISCOVERY_MS) || adb.isConnected
++    }
++
++    private fun tlsPortFromProperty(): Int = try {
++        val p = ProcessBuilder("getprop", "service.adb.tls.port").redirectErrorStream(true).start()
++        val out = p.inputStream.bufferedReader().readText().trim()
++        p.waitFor(2, TimeUnit.SECONDS)
++        out.toIntOrNull()?.takeIf { it in 1..65535 } ?: 0
++    } catch (e: Exception) {
++        0
++    }
++
++    private fun enableWirelessDebugging() {
++        try {
++            val cr = app.contentResolver
++            if (Settings.Global.getInt(cr, "adb_wifi_enabled", 0) != 1) {
++                Settings.Global.putInt(cr, "adb_wifi_enabled", 1)
++                log("helper: turned Wireless debugging on")
++                Thread.sleep(1500)
++            }
++        } catch (e: Exception) {
++            // Needs WRITE_SECURE_SETTINGS, which the first successful start grants. Not fatal.
++        }
++    }
++
++    private fun starterCommand(token: String): String {
++        val pkg = app.packageName
++        val apk = app.applicationInfo.sourceDir
++        return "pm grant $pkg android.permission.WRITE_SECURE_SETTINGS >/dev/null 2>&1; " +
++            "pkill -f '[v]sa_privileged' >/dev/null 2>&1; " +
++            "(CLASSPATH='$apk' setsid nohup /system/bin/app_process /system/bin --nice-name=vsa_privileged " +
++            "${HelperMain::class.java.name} --package=$pkg --nonce=$token >$HELPER_LOG 2>&1 </dev/null &)"
++    }
++
++    /** Runs one shell command over the open ADB connection and returns what it printed, waiting at most [timeoutMs]. */
++    private fun runShell(adb: AbsAdbConnectionManager, command: String, timeoutMs: Long): String {
++        val stream = adb.openStream("shell:$command")
++        val out = StringBuilder()
++        val reader = Thread {
++            try {
++                stream.openInputStream().bufferedReader().forEachLine { line -> synchronized(out) { out.appendLine(line) } }
++            } catch (e: Exception) {
++                // The stream was closed by the timeout below or by the daemon.
++            }
++        }
++        reader.isDaemon = true
++        reader.start()
++        reader.join(timeoutMs)
++        runCatching { stream.close() }
++        return synchronized(out) { out.toString() }
++    }
++
++    private fun newNonce(): String {
++        val bytes = ByteArray(16)
++        SecureRandom().nextBytes(bytes)
++        return bytes.joinToString("") { "%02x".format(it) }
++    }
++
++    // ---- pairing -----------------------------------------------------------------------------
++
++    @Synchronized
++    private fun startPairingDiscovery() {
++        stopPairingDiscovery()
++        val mdns = AdbMdns(app, AdbMdns.SERVICE_TYPE_TLS_PAIRING) { host, port ->
++            if (host != null && port > 0) {
++                pairingHost = host.hostAddress
++                pairingPort = port
++                log("helper: pairing service found on port $port")
++            } else {
++                pairingPort = 0
++            }
++        }
++        pairingMdns = mdns
++        mdns.start()
++        exec.schedule(Runnable { stopPairingDiscovery() }, PAIRING_DISCOVERY_MINUTES, TimeUnit.MINUTES)
++    }
++
++    @Synchronized
++    private fun stopPairingDiscovery() {
++        pairingMdns?.let { runCatching { it.stop() } }
++        pairingMdns = null
++    }
++
++    /** Returns null when paired, otherwise what went wrong. */
++    private fun pairNow(input: String): String? {
++        val match = Regex("""^\s*(?:(\d{3,5})\D+)?(\d{6})\s*$""").matchEntire(input)
++            ?: return "Type the 6-digit pairing code (or: PORT CODE)"
++        val typedPort = match.groupValues[1].toIntOrNull()
++        val code = match.groupValues[2]
++        var waited = 0
++        while (typedPort == null && pairingPort == 0 && waited < 8_000) {
++            Thread.sleep(250)
++            waited += 250
++        }
++        val port = typedPort ?: pairingPort
++        if (port <= 0) return "Pairing dialog not found. Open Developer options > Wireless debugging > Pair device with pairing code, then enter the code again"
++        val host = if (typedPort != null) "127.0.0.1" else (pairingHost ?: "127.0.0.1")
++        val adb = AdbKeys.get(app)
++        if (!adb.pair(host, port, code)) return "Pairing was refused"
++        prefs.edit().putString(KEY_PAIRED_FOR, adb.fingerprint).apply()
++        stopPairingDiscovery()
++        return null
++    }
++
++    private fun set(s: State, svc: IPrivilegedService?, why: String) {
++        synchronized(this) {
++            state = s
++            service = svc
++            detail = why
++        }
++        log("helper: $s ($why)")
++        listeners.forEach { it.onChanged(s, svc) }
++    }
++
++    companion object {
++        private const val PREFS = "vsa_adb"
++        private const val KEY_PAIRED_FOR = "paired_for"
++        private const val HELPER_LOG = "/data/local/tmp/vsa-helper.log"
++        private const val FIRST_RETRY_MS = 4_000L
++        private const val MAX_RETRY_MS = 30_000L
++        private const val DISCOVERY_MS = 12_000L
++        private const val STARTER_WAIT_MS = 8_000L
++        private const val BINDER_WAIT_MS = 15_000L
++        private const val PAIRING_DISCOVERY_MINUTES = 3L
++
++        @Volatile private var active: HelperConnector? = null
++
++        /** Entry point for [HelperBinderProvider]. */
++        internal fun deliver(binder: IBinder, offeredNonce: String?): IBinder? = active?.accept(binder, offeredNonce)
++    }
++}
+diff --git a/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/ShizukuConnector.kt b/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/ShizukuConnector.kt
+deleted file mode 100644
+index 357f81e..0000000
+--- a/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/ShizukuConnector.kt
++++ /dev/null
+@@ -1,181 +0,0 @@
+-package io.github.sparkcyf.voicesipagent.privileged
+-
+-import android.content.ComponentName
+-import android.content.Context
+-import android.content.ServiceConnection
+-import android.content.pm.PackageManager
+-import android.os.Handler
+-import android.os.IBinder
+-import android.os.Looper
+-import io.github.sparkcyf.voicesipagent.privileged.shell.PrivilegedService
+-import rikka.shizuku.Shizuku
+-import java.util.concurrent.CopyOnWriteArrayList
+-
+-/**
+- * App-side lifecycle for the Shizuku UserService: waits for the Shizuku binder (it appears ~15 s
+- * after boot via wireless debugging), checks permission, binds [PrivilegedService] and reports
+- * every transition so the app can re-run setup when the service (re)connects.
+- */
+-class ShizukuConnector(context: Context, private val log: (String) -> Unit) {
+-    enum class State { STOPPED, SHIZUKU_NOT_RUNNING, PERMISSION_REQUIRED, PERMISSION_DENIED, BINDING, CONNECTED, ERROR }
+-
+-    fun interface Listener {
+-        fun onChanged(state: State, service: IPrivilegedService?)
+-    }
+-
+-    private val app = context.applicationContext
+-    private val listeners = CopyOnWriteArrayList<Listener>()
+-    @Volatile var state = State.SHIZUKU_NOT_RUNNING; private set
+-    @Volatile var service: IPrivilegedService? = null; private set
+-    @Volatile var detail: String = ""; private set
+-    @Volatile private var started = false
+-    private val main = Handler(Looper.getMainLooper())
+-    private var generation = 0L
+-    private var connection: ServiceConnection? = null
+-
+-    private val args = Shizuku.UserServiceArgs(ComponentName(app.packageName, PrivilegedService::class.java.name))
+-        .daemon(false)
+-        .processNameSuffix("shell")
+-        .debuggable(false)
+-        .tag("vsa-privileged")
+-        // Restart the shell process whenever a new APK is installed so it never runs stale code.
+-        .version((app.packageManager.getPackageInfo(app.packageName, 0).lastUpdateTime / 1000 % Int.MAX_VALUE).toInt())
+-
+-    private fun connection(epoch: Long) = object : ServiceConnection {
+-        override fun onServiceConnected(name: ComponentName, binder: IBinder?) {
+-            synchronized(this@ShizukuConnector) {
+-                if (!started || generation != epoch) return
+-                if (binder == null || !binder.pingBinder()) {
+-                    set(State.ERROR, null, "UserService binder dead")
+-                    return
+-                }
+-                val svc = IPrivilegedService.Stub.asInterface(binder)
+-                val uid = try { svc.uid } catch (e: Exception) { -1 }
+-                if (uid != 2000 && uid != 0) {
+-                    set(State.ERROR, null, "unexpected privileged uid $uid")
+-                    return
+-                }
+-                set(State.CONNECTED, svc, "uid $uid")
+-            }
+-        }
+-
+-        override fun onServiceDisconnected(name: ComponentName) {
+-            synchronized(this@ShizukuConnector) {
+-                if (!started || generation != epoch) return
+-                connection = null
+-                set(State.ERROR, null, "UserService disconnected")
+-                // Shizuku clears its dead connection after this callback returns. Rebinding
+-                // inside the callback would reuse the connection it is about to discard.
+-                main.post {
+-                    synchronized(this@ShizukuConnector) {
+-                        if (started && generation == epoch) onBinder()
+-                    }
+-                }
+-            }
+-        }
+-    }
+-
+-    private val binderReceived = Shizuku.OnBinderReceivedListener { onBinder() }
+-    private val binderDead = Shizuku.OnBinderDeadListener {
+-        synchronized(this) { if (started) set(State.SHIZUKU_NOT_RUNNING, null, "Shizuku binder died") }
+-    }
+-    private val permissionResult = Shizuku.OnRequestPermissionResultListener { code, result ->
+-        synchronized(this) {
+-            if (!started || code != PERMISSION_REQUEST) return@OnRequestPermissionResultListener
+-            if (result == PackageManager.PERMISSION_GRANTED) bind() else set(State.PERMISSION_DENIED, null, "denied in Shizuku")
+-        }
+-    }
+-
+-    @Synchronized
+-    fun start() {
+-        if (started) return
+-        started = true
+-        generation++
+-        Shizuku.addBinderDeadListener(binderDead)
+-        Shizuku.addRequestPermissionResultListener(permissionResult)
+-        Shizuku.addBinderReceivedListenerSticky(binderReceived)
+-    }
+-
+-    /** Removes this app's listeners and helper; the shared Shizuku server is left running. */
+-    @Synchronized
+-    fun stop() {
+-        if (!started && state == State.STOPPED) return
+-        started = false
+-        generation++
+-        Shizuku.removeBinderReceivedListener(binderReceived)
+-        Shizuku.removeBinderDeadListener(binderDead)
+-        Shizuku.removeRequestPermissionResultListener(permissionResult)
+-        runCatching { service?.closeCallAudio() }.onFailure { log("shizuku: audio cleanup failed: ${it.message}") }
+-        val bound = connection
+-        connection = null
+-        if (bound != null) {
+-            // Clear the client connection synchronously before killing the helper. Otherwise a
+-            // rapid restart can reuse the old connection while its death callback is still queued.
+-            runCatching { Shizuku.unbindUserService(args, bound, false) }
+-                .onFailure { log("shizuku: connection removal failed: ${it.message}") }
+-            runCatching { Shizuku.unbindUserService(args, bound, true) }
+-                .onFailure { log("shizuku: helper removal failed: ${it.message}") }
+-        }
+-        set(State.STOPPED, null, "takeover off")
+-    }
+-
+-    fun addListener(l: Listener) {
+-        listeners.addIfAbsent(l)
+-        l.onChanged(state, service)
+-    }
+-
+-    fun removeListener(l: Listener) {
+-        listeners.remove(l)
+-    }
+-
+-    /** Asks Shizuku for permission (shows Shizuku's dialog). Call from the UI. */
+-    @Synchronized
+-    fun requestPermission() {
+-        if (!started) return
+-        try {
+-            if (!Shizuku.pingBinder()) return set(State.SHIZUKU_NOT_RUNNING, null, "start Shizuku first")
+-            if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bind()
+-            else Shizuku.requestPermission(PERMISSION_REQUEST)
+-        } catch (e: RuntimeException) {
+-            set(State.ERROR, null, "permission request failed: ${e.message}")
+-        }
+-    }
+-
+-    @Synchronized
+-    private fun onBinder() {
+-        if (!started) return
+-        try {
+-            if (!Shizuku.pingBinder()) return set(State.SHIZUKU_NOT_RUNNING, null, "start Shizuku first")
+-            if (Shizuku.isPreV11() || Shizuku.getVersion() < 13) return set(State.ERROR, null, "Shizuku v13+ required")
+-            if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bind()
+-            else set(State.PERMISSION_REQUIRED, null, "grant access in Shizuku")
+-        } catch (e: RuntimeException) {
+-            set(State.ERROR, null, "Shizuku check failed: ${e.message}")
+-        }
+-    }
+-
+-    private fun bind() {
+-        if (!started || state == State.BINDING) return
+-        if (state == State.CONNECTED && service?.asBinder()?.pingBinder() == true) return
+-        set(State.BINDING, null, "binding UserService")
+-        try {
+-            val bound = connection(++generation)
+-            connection = bound
+-            Shizuku.bindUserService(args, bound)
+-        } catch (e: RuntimeException) {
+-            set(State.ERROR, null, "bindUserService failed: ${e.message}")
+-        }
+-    }
+-
+-    private fun set(s: State, svc: IPrivilegedService?, why: String) {
+-        state = s
+-        service = svc
+-        detail = why
+-        log("shizuku: $s ($why)")
+-        listeners.forEach { it.onChanged(s, svc) }
+-    }
+-
+-    companion object {
+-        private const val PERMISSION_REQUEST = 4101
+-    }
+-}
+diff --git a/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/shell/DialerRoles.kt b/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/shell/DialerRoles.kt
+index 5ba0a1e..804b34f 100644
+--- a/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/shell/DialerRoles.kt
++++ b/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/shell/DialerRoles.kt
+@@ -59,7 +59,7 @@ internal class DialerRoles(private val gateway: String, private val platform: Pl
+     private fun checkChange(state: DialerRoleState, expected: String): DialerRoleResult? = when {
+         state.holder != expected -> DialerRoleResult(CHANGED, "Default dialer changed; leaving the new choice in place.", state)
+         !state.available -> DialerRoleResult(FAILED, "Default dialer selection is unavailable on this device.", state)
+-        !state.canManage -> DialerRoleResult(FAILED, "The Shizuku helper cannot manage default-app roles. Use system selection.", state)
++        !state.canManage -> DialerRoleResult(FAILED, "The shell helper cannot manage default-app roles. Use system selection.", state)
+         state.inCall == null -> DialerRoleResult(FAILED, "Could not verify that Telecom is idle. Try again or use system selection.", state)
+         state.inCall == true -> DialerRoleResult(BUSY, "Waiting for current calls to end.", state)
+         else -> null
+diff --git a/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/shell/HelperMain.kt b/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/shell/HelperMain.kt
+new file mode 100644
+index 0000000..e5469e7
+--- /dev/null
++++ b/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/shell/HelperMain.kt
+@@ -0,0 +1,65 @@
++package io.github.sparkcyf.voicesipagent.privileged.shell
++
++import android.content.Context
++import android.os.IBinder
++import android.os.Looper
++import android.util.Log
++import kotlin.system.exitProcess
++
++/**
++ * Entry point of the privileged helper. The app starts it over wireless ADB as
++ * `app_process ... HelperMain --package=<app> --nonce=<token>`, so it runs as the shell user
++ * (uid 2000) with this APK on its class path. It builds a [PrivilegedService], hands the service
++ * binder to the app through [ProviderBridge], and exits when the app process dies.
++ */
++object HelperMain {
++    private const val TAG = "VsaHelper"
++
++    // DeathRecipient is unlinked when the binder it watches is garbage collected, so keep it reachable.
++    @Volatile private var appToken: IBinder? = null
++
++    @JvmStatic
++    fun main(args: Array<String>) {
++        try {
++            run(args)
++        } catch (t: Throwable) {
++            Log.e(TAG, "helper failed", t)
++            System.err.println("helper failed: $t")
++            t.printStackTrace()
++            exitProcess(1)
++        }
++    }
++
++    private fun run(args: Array<String>) {
++        var pkg = ""
++        var nonce = ""
++        for (a in args) {
++            if (a.startsWith("--package=")) pkg = a.substringAfter('=')
++            if (a.startsWith("--nonce=")) nonce = a.substringAfter('=')
++        }
++        require(pkg.isNotEmpty() && nonce.isNotEmpty()) { "usage: HelperMain --package=<pkg> --nonce=<token>" }
++        if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
++
++        val service = PrivilegedService(appContext(pkg))
++        val reply = ProviderBridge.sendBinder("$pkg.helper", 0, service, nonce)
++            ?: error("the app did not accept the helper binder")
++        val token = reply.getBinder(ProviderBridge.KEY_TOKEN) ?: error("the app returned no token")
++        appToken = token
++        token.linkToDeath({
++            Log.i(TAG, "app process ended, exiting")
++            runCatching { service.closeCallAudio() }
++            exitProcess(0)
++        }, 0)
++        Log.i(TAG, "helper ready for $pkg")
++        Looper.loop()
++        exitProcess(0)
++    }
++
++    /** A Context whose package is the app, which [PrivilegedService] uses for its uid and package name. */
++    private fun appContext(pkg: String): Context {
++        val activityThread = Class.forName("android.app.ActivityThread")
++        val thread = activityThread.getMethod("systemMain").invoke(null)
++        val system = activityThread.getMethod("getSystemContext").invoke(thread) as Context
++        return system.createPackageContext(pkg, 0)
++    }
++}
+diff --git a/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/shell/PrivilegedService.kt b/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/shell/PrivilegedService.kt
+index 868b77a..05ff96e 100644
+--- a/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/shell/PrivilegedService.kt
++++ b/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/shell/PrivilegedService.kt
+@@ -18,7 +18,7 @@ import io.github.sparkcyf.voicesipagent.privileged.DialerRoleResult
+ import kotlin.system.exitProcess
+ 
+ /**
+- * Shizuku UserService, instantiated by Shizuku inside an app_process running as shell.
++ * The privileged service, instantiated by [HelperMain] inside an app_process running as shell.
+  * Only the owning app (same uid that bound us) may call in.
+  */
+ class PrivilegedService(context: Context) : IPrivilegedService.Stub() {
+diff --git a/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/shell/ProviderBridge.kt b/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/shell/ProviderBridge.kt
+new file mode 100644
+index 0000000..41aa2ee
+--- /dev/null
++++ b/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/shell/ProviderBridge.kt
+@@ -0,0 +1,97 @@
++package io.github.sparkcyf.voicesipagent.privileged.shell
++
++import android.os.Binder
++import android.os.Build
++import android.os.Bundle
++import android.os.IBinder
++import android.os.IInterface
++import android.os.Process
++import android.util.Log
++
++/**
++ * Sends the helper's binder to the app's ContentProvider. A shell process cannot bind to an app, so
++ * this goes through ActivityManager.getContentProviderExternal (the same route Shizuku uses), then
++ * IContentProvider.call. Hidden APIs are reachable by reflection here because this process was not
++ * forked from the app zygote.
++ */
++internal object ProviderBridge {
++    private const val TAG = "VsaHelper"
++    const val METHOD_SEND_BINDER = "sendBinder"
++    const val KEY_BINDER = "binder"
++    const val KEY_NONCE = "nonce"
++    const val KEY_TOKEN = "token"
++
++    /** Returns the provider's reply (which carries the app token), or null after three failed tries. */
++    fun sendBinder(authority: String, userId: Int, service: Binder, nonce: String): Bundle? {
++        for (attempt in 1..3) {
++            val reply = trySend(authority, userId, service, nonce)
++            if (reply != null) return reply
++            Log.w(TAG, "binder delivery attempt $attempt failed")
++            Thread.sleep(1000)
++        }
++        return null
++    }
++
++    private fun trySend(authority: String, userId: Int, service: Binder, nonce: String): Bundle? {
++        var provider: Any? = null
++        val am = activityManager()
++        try {
++            provider = contentProviderExternal(am, authority, userId)
++            if (provider == null) {
++                Log.e(TAG, "provider $authority not found for user $userId")
++                return null
++            }
++            if (!(provider as IInterface).asBinder().pingBinder()) {
++                Log.e(TAG, "provider $authority is dead")
++                return null
++            }
++            val extras = Bundle()
++            extras.putBinder(KEY_BINDER, service)
++            extras.putString(KEY_NONCE, nonce)
++            return callProvider(provider, authority, METHOD_SEND_BINDER, extras)
++        } catch (t: Throwable) {
++            Log.e(TAG, "binder delivery failed", t)
++            return null
++        } finally {
++            if (provider != null) {
++                try {
++                    am.javaClass.getMethod("removeContentProviderExternal", String::class.java, IBinder::class.java)
++                        .invoke(am, authority, null)
++                } catch (t: Throwable) {
++                    Log.w(TAG, "removeContentProviderExternal failed", t)
++                }
++            }
++        }
++    }
++
++    private fun activityManager(): Any =
++        Class.forName("android.app.ActivityManager").getMethod("getService").invoke(null)!!
++
++    /**
++     * Returns the IContentProvider of [authority]. The token is null on purpose: when it crosses
++     * processes it becomes a new BinderProxy each time, so removeContentProviderExternal could never
++     * match it, while a null token uses a plain reference count.
++     */
++    private fun contentProviderExternal(am: Any, authority: String, userId: Int): Any? {
++        val method = am.javaClass.methods.firstOrNull {
++            it.name == "getContentProviderExternal" && it.parameterTypes.size == 4
++        } ?: error("getContentProviderExternal(4 args) not found")
++        val holder = method.invoke(am, authority, userId, null, authority) ?: return null
++        return holder.javaClass.getField("provider").get(holder)
++    }
++
++    private fun callProvider(provider: Any, authority: String, method: String, extras: Bundle): Bundle? {
++        val calls = provider.javaClass.methods.filter { it.name == "call" }
++        if (Build.VERSION.SDK_INT >= 31) {
++            val m = calls.firstOrNull { it.parameterTypes.size == 5 && it.parameterTypes[0].name == "android.content.AttributionSource" }
++                ?: error("IContentProvider.call(AttributionSource, ...) not found")
++            val builderClass = Class.forName("android.content.AttributionSource\$Builder")
++            val builder = builderClass.getConstructor(Int::class.javaPrimitiveType).newInstance(Process.myUid())
++            val source = builderClass.getMethod("build").invoke(builder)
++            return m.invoke(provider, source, authority, method, null, extras) as Bundle?
++        }
++        // Android 11: call(callingPkg, attributionTag, authority, method, arg, extras)
++        val m = calls.firstOrNull { it.parameterTypes.size == 6 } ?: error("IContentProvider.call(6 args) not found")
++        return m.invoke(provider, null, null, authority, method, null, extras) as Bundle?
++    }
++}
+diff --git a/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/shell/ShellEnv.kt b/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/shell/ShellEnv.kt
+index c300840..33bb978 100644
+--- a/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/shell/ShellEnv.kt
++++ b/privileged/src/main/kotlin/io/github/sparkcyf/voicesipagent/privileged/shell/ShellEnv.kt
+@@ -12,7 +12,7 @@ import android.os.Process
+ import java.util.concurrent.TimeUnit
+ 
+ /**
+- * Helpers for code running inside the Shizuku UserService process (uid 2000). Audio APIs check
++ * Helpers for code running inside the shell helper process (uid 2000). Audio APIs check
+  * the caller's attribution, so we present ourselves as com.android.shell rather than as the app
+  * package whose code we are running.
+  */
+diff --git a/settings.gradle.kts b/settings.gradle.kts
+index 976ed67..948d089 100644
+--- a/settings.gradle.kts
++++ b/settings.gradle.kts
+@@ -16,6 +16,10 @@ dependencyResolutionManagement {
+     repositories {
+         google()
+         mavenCentral()
++        // Only for the ADB client library and its helpers, which are published through JitPack.
++        maven("https://jitpack.io") {
++            content { includeGroupByRegex("com\\.github\\..*") }
++        }
+     }
+ }
+ 

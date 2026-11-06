@@ -484,7 +484,7 @@ function saudeLinhas() {
     linhas.push({
       nivel: "erro",
       titulo: "Celular gateway",
-      texto: "Offline. No celular: abra o Voice SIP Agent, confira a aba Health e ligue Take over calls. Se o celular reiniciou, inicie o Shizuku de novo.",
+      texto: "Offline. No celular: abra o Voice SIP Agent, confira a aba Health e ligue Take over calls. Se o celular reiniciou, ligue o Wi-Fi e a Depuração sem fio: o app reconecta sozinho.",
       acao: "conectar-celular",
       acaoRotulo: "Conectar celular"
     });
@@ -1853,14 +1853,16 @@ function medirAudioChamada() {
 
 /* ===== 8c. Conectar celular (QR para o app Voice SIP Agent) ===== */
 
-// O QR leva o JSON de configuracao que o app sabe importar. Ele e montado aqui no navegador com o que o
-// servidor entrega em /api/celular (so ao proprio PC) e nao e gravado em lugar nenhum.
+// O painel tem duas abas. "1. Baixar o app": QR com o link do APK que a Central serve (pasta apk-celular/).
+// "2. Configurar": QR com o JSON de configuracao que o app sabe importar. Os dois sao montados aqui no
+// navegador com o que o servidor entrega (/api/apk e /api/celular, so ao proprio PC) e nao sao gravados.
 var QR_VISIVEL_MS = 120000;
 var CEL_CONSULTA_MS = 5000;
 var TIMER_CEL_CONSULTA = 0;
 var TIMER_CEL_QR = 0;
 var TIMER_CEL_LIMPAR = 0;
-S.celular = null; // { carregando, erro, dados, ip, outro, qrVisivel, viuOffline }
+var COMANDO_APK = "python3 -m zipfile -e ~/Downloads/voice-sip-agent-apk.zip modulos/central/apk-celular";
+S.celular = null; // { aba, carregando, erro, dados, apk, apkErro, ips, ip, outro, qrVisivel, viuOffline }
 
 function ipValido(ip) {
   var m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(String(ip || "").trim());
@@ -1880,6 +1882,10 @@ function celularConectado() {
   return !!(e && e.ari && e.ari.ok && e.gateway && e.gateway.estado === "online");
 }
 
+function tamanhoTxt(bytes) {
+  return (Number(bytes) / 1048576).toFixed(1).replace(".", ",") + " MB";
+}
+
 /** O JSON que o app importa (formato voice-sip-agent-config v1). So as chaves que a Central conhece. */
 function jsonCelular() {
   var c = S.celular;
@@ -1893,6 +1899,16 @@ function jsonCelular() {
     sip: { server: String(c.ip).trim(), port: d.porta, transport: "udp", srtp: "off", domain: "", user: d.usuario, password: d.senha },
     routing: { target: d.usuario }
   });
+}
+
+/** O link que o celular abre para baixar o APK: IP escolhido, mesma porta desta pagina. */
+function urlApk() {
+  var c = S.celular;
+  var a = c && c.apk && c.apk.apk;
+  if (!a || !ipValido(c.ip)) {
+    return "";
+  }
+  return location.protocol + "//" + String(c.ip).trim() + (location.port ? ":" + location.port : "") + BASE + "/apk/" + encodeURIComponent(a.nome);
 }
 
 /** Desenha o QR como SVG (um unico path). As cores vem do CSS, por token. */
@@ -1913,12 +1929,43 @@ function svgQr(texto) {
   var lado = n + 2 * margem;
   return (
     '<svg class="ch-qr-svg" viewBox="0 0 ' + lado + " " + lado + '" role="img"' +
-    ' aria-label="QR code com as configurações do celular" shape-rendering="crispEdges"><path d="' + d + '"></path></svg>'
+    ' aria-label="QR code" shape-rendering="crispEdges"><path d="' + d + '"></path></svg>'
   );
 }
 
 function avisoCelular(titulo, dica) {
   return '<p class="ch-cel-aviso"><strong>' + esc(titulo) + "</strong>" + (dica ? "<br>" + esc(dica) : "") + "</p>";
+}
+
+/** QR pronto para a tela, ou o aviso do que faltou. */
+function htmlQr(texto) {
+  if (typeof qrcode === "undefined") {
+    return avisoCelular("A biblioteca de QR não carregou", "Falta o arquivo vendor/qrcode.js.");
+  }
+  try {
+    return '<div class="ch-qr">' + svgQr(texto) + "</div>";
+  } catch (err) {
+    return avisoCelular("Não consegui gerar o QR", err.message);
+  }
+}
+
+function renderCelAba() {
+  var c = S.celular;
+  var caixa = $("#chCelAbas");
+  if (!caixa || !c) {
+    return;
+  }
+  var botoes = caixa.querySelectorAll("[data-valor]");
+  for (var i = 0; i < botoes.length; i++) {
+    var ativo = botoes[i].getAttribute("data-valor") === c.aba;
+    botoes[i].classList.toggle("ativo", ativo);
+    botoes[i].setAttribute("aria-selected", ativo ? "true" : "false");
+    if (ativo) {
+      caixa.style.setProperty("--i", String(i));
+    }
+  }
+  $("#chCelApk").hidden = c.aba !== "apk";
+  $("#chCelCfg").hidden = c.aba !== "config";
 }
 
 function renderCelEstado() {
@@ -1947,6 +1994,50 @@ function renderCelEstado() {
     '<div class="ch-linha-txt"><strong>' + esc(titulo) + "</strong><span>" + esc(texto) + "</span></div>";
 }
 
+function renderCelApk() {
+  var el = $("#chCelApkCorpo");
+  var c = S.celular;
+  if (!el || !c) {
+    return;
+  }
+  if (c.carregando) {
+    el.innerHTML = '<p class="ch-dica">Carregando...</p>';
+    return;
+  }
+  if (c.apkErro) {
+    el.innerHTML = avisoCelular(c.apkErro.message, c.apkErro.dica);
+    return;
+  }
+  var a = c.apk && c.apk.apk;
+  if (!a) {
+    el.innerHTML =
+      '<p class="ch-cel-aviso"><strong>Ainda não há APK na pasta da Central</strong><br>' +
+      "Baixe o artefato voice-sip-agent-apk da execução do workflow no GitHub e, no terminal, na pasta do projeto, rode:</p>" +
+      '<pre class="ch-cel-cmd">' + esc(COMANDO_APK) + "</pre>" +
+      '<div class="ch-cel-botoes">' +
+      '<button class="btn btn-suave" data-acao="copiar-texto" data-texto="' + esc(COMANDO_APK) + '" data-aviso="Comando copiado">Copiar comando</button>' +
+      '<button class="btn btn-suave" data-acao="celular-reler">Procurar de novo</button></div>';
+    return;
+  }
+  if (!ipValido(c.ip)) {
+    el.innerHTML = avisoCelular("Informe o IP deste computador na rede", "Algo como 192.168.0.10. No terminal: hostname -I");
+    return;
+  }
+  var url = urlApk();
+  el.innerHTML =
+    '<ol class="ch-cel-passos">' +
+    "<li>No celular, abra a câmera e aponte para o QR (celular e computador na mesma rede Wi-Fi).</li>" +
+    "<li>Toque no link e baixe o arquivo. Se o Chrome avisar que o download é inseguro ou perigoso, escolha baixar mesmo assim: é o seu próprio APK, servido por este computador.</li>" +
+    "<li>Abra o arquivo baixado. O Android pede para permitir instalar apps desconhecidos para o navegador.</li>" +
+    "<li>Depois volte aqui e abra <strong>2. Configurar</strong>.</li></ol>" +
+    '<div class="ch-qr-caixa">' + htmlQr(url) +
+    '<p class="ch-cel-arq"><strong>' + esc(a.nome) + "</strong><br>" + esc(tamanhoTxt(a.tamanho)) + " · SHA-256 " + esc(String(a.sha256).slice(0, 16)) + "...</p>" +
+    '<p class="ch-cel-url">' + esc(url) + "</p>" +
+    '<div class="ch-cel-botoes">' +
+    '<button class="btn btn-suave" data-acao="copiar-texto" data-texto="' + esc(url) + '" data-aviso="Link copiado">Copiar link</button>' +
+    '<button class="btn btn-suave" data-acao="celular-reler">Procurar de novo</button></div></div>';
+}
+
 function renderCelQr() {
   var el = $("#chCelQr");
   var c = S.celular;
@@ -1968,18 +2059,12 @@ function renderCelQr() {
   var h;
   if (!c.qrVisivel) {
     h = '<p class="ch-dica">QR escondido por segurança.</p>';
-  } else if (typeof qrcode === "undefined") {
-    h = avisoCelular("A biblioteca de QR não carregou", "Falta o arquivo vendor/qrcode.js.");
   } else {
     var json = jsonCelular();
     if (!/^[\x20-\x7e]+$/.test(json)) {
       h = avisoCelular("A senha tem caractere fora do ASCII", "O QR não leva acentos. Rode de novo o instalar.sh para gerar uma senha nova.");
     } else {
-      try {
-        h = '<div class="ch-qr">' + svgQr(json) + "</div>";
-      } catch (err) {
-        h = avisoCelular("Não consegui gerar o QR", err.message);
-      }
+      h = htmlQr(json);
     }
   }
   el.innerHTML =
@@ -1993,11 +2078,11 @@ function renderCelIp() {
   if (!el) {
     return;
   }
-  if (!c || !c.dados) {
+  if (!c || c.carregando || (!c.dados && !c.apk)) {
     el.innerHTML = "";
     return;
   }
-  var ips = c.dados.ips || [];
+  var ips = c.ips || [];
   var h = '<div class="ch-cel-ip"><label class="ch-audio-rot" for="selCelularIp">IP deste computador na rede</label>';
   if (ips.length) {
     h += '<select id="selCelularIp" class="ch-select">';
@@ -2018,16 +2103,22 @@ function renderCelIp() {
 function htmlCelular() {
   return (
     '<div class="ch-celular">' +
+    '<div class="segmentado ch-cel-abas" id="chCelAbas" role="tablist"><span class="indicador"></span>' +
+    '<button data-acao="celular-aba" data-valor="apk" role="tab">1. Baixar o app</button>' +
+    '<button data-acao="celular-aba" data-valor="config" role="tab">2. Configurar</button></div>' +
+    '<div class="ch-cel-painel" id="chCelApk"><div id="chCelApkCorpo"></div></div>' +
+    '<div class="ch-cel-painel" id="chCelCfg">' +
     '<div class="ch-linha ch-cel-estado" id="chCelEstado"></div>' +
     '<ol class="ch-cel-passos">' +
-    "<li>Instale o app e inicie o Shizuku (Etapa 6 do PASSO-A-PASSO).</li>" +
+    "<li>Instale o app e faça o pareamento (a caixa <strong>First setup</strong> no topo do app explica; é uma vez só, Etapa 6).</li>" +
     "<li>No app, role até <strong>Scan QR code</strong> e toque nele.</li>" +
     "<li>Aponte a câmera para o QR abaixo, confira as mudanças e toque em <strong>Import</strong>.</li>" +
     "<li>Ligue <strong>Take over calls</strong> no app.</li>" +
     "</ol>" +
     '<div id="chCelQr"></div>' +
+    '<p class="ch-dica">O QR contém a senha do celular: não mostre a ninguém nem tire foto. Ele se esconde sozinho em 2 minutos.</p>' +
+    "</div>" +
     '<div id="chCelIp"></div>' +
-    '<p class="ch-dica">Celular e computador na mesma rede Wi-Fi. O QR contém a senha do celular: não mostre a ninguém nem tire foto. Ele se esconde sozinho em 2 minutos.</p>' +
     "</div>"
   );
 }
@@ -2077,41 +2168,88 @@ function consultarCelular() {
   });
 }
 
-function abrirCelular() {
-  pararCelular();
-  var meu = { carregando: true, erro: null, dados: null, ip: "", outro: false, qrVisivel: true, viuOffline: false };
-  var e0 = S.estado;
-  meu.viuOffline = !!(e0 && e0.ari && e0.ari.ok && !celularConectado());
-  S.celular = meu;
-  abrirSheet("Conectar celular", htmlCelular());
-  renderCelEstado();
-  renderCelIp();
-  renderCelQr();
-  api("/api/celular")
+/** Le de novo a pasta do APK (depois de copiar um APK novo para la). */
+function lerApkCelular(avisar) {
+  var meu = S.celular;
+  if (!meu) {
+    return Promise.resolve();
+  }
+  return api("/api/apk")
     .then(function (d) {
-      exigirOk(d);
-      if (S.celular !== meu) {
-        return;
+      meu.apk = exigirOk(d);
+      meu.apkErro = null;
+      if (!meu.ips.length && d.ips && d.ips.length) {
+        meu.ips = d.ips;
+        meu.ip = d.ips[0].ip;
+        meu.outro = false;
       }
-      meu.dados = d;
-      var ips = d.ips || [];
-      meu.ip = ips.length ? ips[0].ip : "";
-      meu.outro = !ips.length;
-      agendarQr();
     })
     .catch(function (e) {
-      if (S.celular === meu) {
-        meu.erro = e;
-      }
+      meu.apkErro = e;
     })
     .then(function () {
       if (S.celular !== meu) {
         return;
       }
-      meu.carregando = false;
+      renderCelApk();
       renderCelIp();
-      renderCelQr();
+      if (avisar) {
+        toast(meu.apk && meu.apk.apk ? "APK encontrado" : "Ainda não achei o APK");
+      }
     });
+}
+
+function abrirCelular() {
+  pararCelular();
+  var e0 = S.estado;
+  var meu = {
+    aba: celularConectado() ? "config" : "apk",
+    carregando: true,
+    erro: null,
+    dados: null,
+    apk: null,
+    apkErro: null,
+    ips: [],
+    ip: "",
+    outro: false,
+    qrVisivel: true,
+    viuOffline: !!(e0 && e0.ari && e0.ari.ok && !celularConectado())
+  };
+  S.celular = meu;
+  abrirSheet("Conectar celular", htmlCelular());
+  renderCelAba();
+  renderCelEstado();
+  renderCelApk();
+  renderCelIp();
+  renderCelQr();
+  var pCel = api("/api/celular")
+    .then(function (d) {
+      meu.dados = exigirOk(d);
+    })
+    .catch(function (e) {
+      meu.erro = e;
+    });
+  var pApk = api("/api/apk")
+    .then(function (d) {
+      meu.apk = exigirOk(d);
+    })
+    .catch(function (e) {
+      meu.apkErro = e;
+    });
+  Promise.all([pCel, pApk]).then(function () {
+    if (S.celular !== meu) {
+      return;
+    }
+    var ips = (meu.dados && meu.dados.ips) || (meu.apk && meu.apk.ips) || [];
+    meu.ips = ips;
+    meu.ip = ips.length ? ips[0].ip : "";
+    meu.outro = !ips.length;
+    meu.carregando = false;
+    agendarQr();
+    renderCelApk();
+    renderCelIp();
+    renderCelQr();
+  });
   TIMER_CEL_CONSULTA = setInterval(consultarCelular, CEL_CONSULTA_MS);
   consultarCelular();
 }
@@ -2133,6 +2271,21 @@ function pararCelular() {
       $("#sheetCorpo").innerHTML = "";
     }
   }, 400);
+}
+
+function trocarAbaCelular(aba) {
+  var c = S.celular;
+  if (!c || (aba !== "apk" && aba !== "config")) {
+    return;
+  }
+  c.aba = aba;
+  if (aba === "config" && c.qrVisivel) {
+    agendarQr();
+  }
+  renderCelAba();
+  if (aba === "apk" && !c.carregando && !(c.apk && c.apk.apk)) {
+    lerApkCelular(false);
+  }
 }
 
 function alternarQrCelular() {
@@ -2158,9 +2311,10 @@ function escolherIpCelular(valor) {
   c.ip = c.outro ? "" : valor;
   renderCelIp();
   renderCelQr();
+  renderCelApk();
 }
 
-/** So redesenha o QR: o campo de texto continua o mesmo, entao o teclado nao fecha. */
+/** So redesenha os QRs: o campo de texto continua o mesmo, entao o teclado nao fecha. */
 function digitarIpCelular(valor) {
   var c = S.celular;
   if (!c) {
@@ -2168,6 +2322,7 @@ function digitarIpCelular(valor) {
   }
   c.ip = valor;
   renderCelQr();
+  renderCelApk();
 }
 
 /* ===== 9. Carregamento ===== */
@@ -2284,6 +2439,12 @@ function acao(nome, alvo) {
     abrirCelular();
   } else if (nome === "celular-qr") {
     alternarQrCelular();
+  } else if (nome === "celular-aba") {
+    trocarAbaCelular(alvo.getAttribute("data-valor"));
+  } else if (nome === "celular-reler") {
+    lerApkCelular(true);
+  } else if (nome === "copiar-texto") {
+    copiar(alvo.getAttribute("data-texto") || "", alvo.getAttribute("data-aviso") || "Copiado");
   } else if (nome === "simular") {
     mockChegou();
   } else if (nome === "recarregar") {

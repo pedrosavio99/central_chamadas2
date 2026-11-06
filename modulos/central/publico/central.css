@@ -410,3 +410,49 @@
 .ch-cel-campo:focus {
   outline: 2px solid var(--destaque);
 }
+
+/* ===== Conectar celular: abas e APK ===== */
+
+.ch-cel-abas {
+  margin: 0;
+}
+.ch-cel-painel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.ch-cel-painel[hidden] {
+  display: none;
+}
+.ch-cel-botoes {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+.ch-cel-arq {
+  margin: 0;
+  font-size: 14px;
+  text-align: center;
+  color: var(--texto-2);
+  overflow-wrap: anywhere;
+}
+.ch-cel-arq strong {
+  color: var(--texto);
+}
+.ch-cel-url,
+.ch-cel-cmd {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--raio-cartao);
+  background: var(--preenchimento);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.ch-cel-url {
+  text-align: center;
+}
+.ch-cel-cmd {
+  white-space: pre-wrap;
+}

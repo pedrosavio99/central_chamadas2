@@ -4,10 +4,11 @@
  * NAO faz: regra de negocio (rotas.mjs), chamadas ao Asterisk (nucleo.mjs) nem importar o host.
  */
 import express from "express";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { rotear } from "./rotas.mjs";
-import { ErroHttp } from "./nucleo.mjs";
+import { ErroHttp, abrirApk } from "./nucleo.mjs";
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const PUBLICO = path.join(AQUI, "..", "publico");
@@ -26,6 +27,32 @@ router.get("/", (req, res) => {
 });
 
 router.use(express.static(PUBLICO, { fallthrough: true, maxAge: 0 }));
+
+// Download do APK do celular. Sem exigir "acesso do proprio PC": e o celular, na rede local, que baixa.
+// So entrega o .apk que a pasta apk-celular/ tem agora (nome simples, sem caminho vindo do cliente).
+router.get("/apk/:nome", (req, res) => {
+  try {
+    const apk = abrirApk(req.params.nome);
+    res.set({
+      "Content-Type": "application/vnd.android.package-archive",
+      "Content-Length": String(apk.tamanho),
+      "Content-Disposition": 'attachment; filename="' + apk.nome + '"',
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff"
+    });
+    if (req.method === "HEAD") {
+      res.end();
+      return;
+    }
+    fs.createReadStream(apk.caminho)
+      .on("error", () => res.destroy())
+      .pipe(res);
+  } catch (err) {
+    const status = err instanceof ErroHttp ? err.status : 500;
+    if (status >= 500) console.error("[central]", err);
+    res.status(status).type("text/plain").send(err.message + (err.dica ? "\n" + err.dica : ""));
+  }
+});
 
 router.use(async (req, res, next) => {
   if (!req.path.startsWith("/api")) {

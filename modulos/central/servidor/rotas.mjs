@@ -11,6 +11,7 @@ import {
   buscarEstado,
   montarConfig,
   montarCelular,
+  montarApk,
   listarChamadas,
   registrarChamada
 } from "./nucleo.mjs";
@@ -21,6 +22,7 @@ const ROTAS_VALIDAS = [
   "GET /api/health",
   "GET /api/config",
   "GET /api/celular",
+  "GET /api/apk",
   "GET /api/estado",
   "GET /api/chamadas",
   "POST /api/chamadas"
@@ -117,6 +119,15 @@ export async function rotear(req, url) {
     verificarOrigem(req);
     exigirLocal(req);
     return montarCelular();
+  }
+
+  // Informacoes do APK servido pela Central (nome, tamanho, SHA-256) e IPs do PC. O download em si e
+  // GET /apk/<arquivo> (index.js), fora do /api, porque quem baixa e o celular.
+  if (metodo === "GET" && caminho === "/api/apk") {
+    exigirToken();
+    verificarOrigem(req);
+    exigirLocal(req);
+    return montarApk();
   }
 
   if (metodo === "GET" && caminho === "/api/estado") {

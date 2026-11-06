@@ -14,8 +14,9 @@ Arquitetura do projeto: veja o `AGENTS.md` (um servidor Express, frontend sem bu
 ## Leia antes
 
 - Uma chamada por vez, sem tom de chamada (o outro lado só é ouvido depois que atende).
-- O celular precisa estar ligado, na mesma rede Wi-Fi do PC, com o Shizuku rodando (depois de reiniciar o
-  celular, o Shizuku precisa ser iniciado de novo à mão).
+- O celular precisa estar ligado, na mesma rede Wi-Fi do PC e com a Depuração sem fio ligada. O app faz o
+  pareamento uma vez só e depois se reconecta sozinho (inclusive depois de reiniciar o celular). Não precisa
+  de Shizuku nem de outro app.
 - Cada chamada feita gasta minutos do plano do chip.
 - Esta v1 roda só no seu PC, abrindo `http://localhost:3333/central/`. Não faça deploy na Vercel.
 - Não tem login. As senhas do ramal saem só para o próprio PC.
@@ -42,13 +43,14 @@ ligação).
 | `PASSO-A-PASSO.md` | O guia completo da v1 |
 | `modulos/central/` | O módulo (servidor, tela, modelos do Asterisk, instalador) |
 | `.github/workflows/gerar-apk.yml` | Compila o app do celular (Voice SIP Agent) no GitHub Actions |
-| `apk/` | `qr-scan.patch`: acrescenta o botão **Scan QR code** ao app; o workflow aplica antes de compilar |
+| `apk/` | `qr-scan.patch` (botão **Scan QR code**) e `sem-shizuku.patch` (o app se pareia e se conecta sozinho, sem Shizuku); o workflow aplica os dois antes de compilar |
 | `src/`, `api/`, `public/`, `vercel.json` | O host (Express, página inicial) |
 
 ## Créditos e licenças
 
 - App do celular: [sparkcyf/android-voice-sip-agent](https://github.com/sparkcyf/android-voice-sip-agent)
-  (GPL-2.0). O workflow compila o código dele e aplica `apk/qr-scan.patch`, uma alteração pequena (obra derivada,
+  (GPL-2.0). O workflow compila o código dele e aplica `apk/qr-scan.patch` e `apk/sem-shizuku.patch` (obras derivadas,
   também GPL-2.0). O resto do app não é copiado para este repositório.
 - JsSIP 3.13.9 (MIT) e qrcode-generator 2.0.4 (MIT), em `modulos/central/publico/vendor/`.
-- Asterisk, Shizuku: instalados a partir das fontes oficiais deles.
+- Asterisk: instalado a partir da fonte oficial. libadb-android (cliente ADB dentro do app, Apache-2.0 ou GPL-3.0+),
+  buscado pelo JitPack na hora de compilar.

@@ -6,6 +6,7 @@
  * chamada (o audio vai direto navegador <-> Asterisk <-> celular, sem passar por este servidor).
  */
 import fs from "node:fs";
+import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -278,6 +279,93 @@ export function montarCelular() {
     );
   }
   return { ...base, ips: ipsLocais(), porta: Number(cfg.gwPorta) || 5060, usuario: cfg.gateway, senha: cfg.gwSenha };
+}
+
+/* ===== APK do celular (download pela rede local) ===== */
+
+// O APK vem do GitHub Actions (artefato .zip). Quem roda a Central extrai o .apk nesta pasta e o painel
+// "Conectar celular" mostra um QR com o link. Fica fora de /api de proposito: quem baixa e o celular, na rede.
+const PASTA_APK_REL = "modulos/central/apk-celular";
+const NOME_APK = /^[A-Za-z0-9._-]{1,120}\.apk$/;
+
+function pastaApk() {
+  return path.join(raizModulo(), "apk-celular");
+}
+
+/** O .apk mais novo da pasta (nome simples, arquivo comum, nao vazio), ou null. Nada de subpastas. */
+export function acharApk() {
+  let nomes;
+  try {
+    nomes = fs.readdirSync(pastaApk());
+  } catch {
+    return null;
+  }
+  let melhor = null;
+  for (const nome of nomes) {
+    if (!NOME_APK.test(nome)) continue;
+    const caminho = path.join(pastaApk(), nome);
+    let st;
+    try {
+      st = fs.statSync(caminho);
+    } catch {
+      continue;
+    }
+    if (!st.isFile() || st.size <= 0) continue;
+    if (!melhor || st.mtimeMs > melhor.modificadoEm) melhor = { nome, caminho, tamanho: st.size, modificadoEm: st.mtimeMs };
+  }
+  return melhor;
+}
+
+/** Valida o nome pedido no download: so entrega o arquivo que acharApk() anuncia (sem caminhos do cliente). */
+export function abrirApk(nome) {
+  if (cfg.mock) {
+    throw new ErroHttp(404, "Modo MOCK: não há APK para baixar", "Rode sem MOCK=1 para servir o APK da pasta " + PASTA_APK_REL + "/.");
+  }
+  const apk = acharApk();
+  if (!apk || apk.nome !== nome) {
+    throw new ErroHttp(404, "APK não encontrado", "Coloque o .apk em " + PASTA_APK_REL + "/ e abra o painel Conectar celular para ver o link atual.");
+  }
+  return apk;
+}
+
+const shaCache = new Map();
+
+function sha256Arquivo(apk) {
+  const chave = apk.nome + "|" + apk.tamanho + "|" + apk.modificadoEm;
+  if (shaCache.has(chave)) return shaCache.get(chave);
+  const p = new Promise((resolve, reject) => {
+    const h = crypto.createHash("sha256");
+    fs.createReadStream(apk.caminho)
+      .on("error", reject)
+      .on("data", (b) => h.update(b))
+      .on("end", () => resolve(h.digest("hex")));
+  });
+  shaCache.set(chave, p);
+  p.catch(() => shaCache.delete(chave));
+  if (shaCache.size > 8) shaCache.delete(shaCache.keys().next().value);
+  return p;
+}
+
+/** O que o painel precisa para a aba "Baixar o app": o APK da pasta (se houver) e os IPs do PC para o link. */
+export async function montarApk() {
+  const base = { ok: true, mock: cfg.mock, cache: false, carregadoEm: Date.now(), pasta: PASTA_APK_REL };
+  if (cfg.mock) {
+    return {
+      ...base,
+      ips: [{ ip: "192.168.0.10", interface: "wlan0" }],
+      apk: { nome: "voice-sip-agent-exemplo-qr-debug.apk", tamanho: 31457280, modificadoEm: Date.now(), sha256: "0".repeat(64) }
+    };
+  }
+  const achado = acharApk();
+  let apk = null;
+  if (achado) {
+    try {
+      apk = { nome: achado.nome, tamanho: achado.tamanho, modificadoEm: achado.modificadoEm, sha256: await sha256Arquivo(achado) };
+    } catch {
+      apk = null; // o arquivo sumiu no meio da leitura: para o painel e como se nao houvesse
+    }
+  }
+  return { ...base, ips: ipsLocais(), apk };
 }
 
 /* ===== Historico de chamadas (em memoria) ===== */
