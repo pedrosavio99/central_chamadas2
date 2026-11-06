@@ -1,0 +1,82 @@
+; CENTRAL-CHAMADAS (gerado pelo instalar.sh a partir de pjsip.conf.modelo)
+; Nao edite o arquivo em /etc/asterisk: edite o modelo e rode o instalar.sh de novo.
+;
+; Dois "ramais":
+;   atendente : o navegador (JsSIP por WebSocket, audio WebRTC)
+;   android-gw: o celular com o app Voice SIP Agent (UDP na rede local, audio RTP simples)
+
+; Porta de entrada: so aceita trafego de redes privadas e do proprio PC.
+; Para usar de fora (v2, Oracle) esta regra precisa mudar, junto com TLS.
+[acl-rede-local]
+type=acl
+deny=0.0.0.0/0.0.0.0
+permit=127.0.0.0/255.0.0.0
+permit=10.0.0.0/255.0.0.0
+permit=172.16.0.0/255.240.0.0
+permit=192.168.0.0/255.255.0.0
+
+[transporte-udp]
+type=transport
+protocol=udp
+bind=0.0.0.0:5060
+
+; O WebSocket em si e atendido pelo http.conf (127.0.0.1:8088); este bloco so declara o transporte.
+[transporte-ws]
+type=transport
+protocol=ws
+bind=0.0.0.0
+
+; ---------------------------------------------------------------- atendente (navegador)
+[atendente]
+type=endpoint
+context=de-atendente
+disallow=all
+allow=ulaw,alaw
+webrtc=yes
+dtls_auto_generate_cert=yes
+dtmf_mode=rfc4733
+direct_media=no
+callerid="Atendente" <atendente>
+auth=atendente-auth
+aors=atendente
+
+[atendente-auth]
+type=auth
+auth_type=userpass
+username=atendente
+password=__SIP_SENHA__
+
+[atendente]
+type=aor
+; Uma aba por vez: abrir a Central em outra aba derruba o registro da primeira.
+max_contacts=1
+remove_existing=yes
+
+; ---------------------------------------------------------------- android-gw (celular)
+[android-gw]
+type=endpoint
+context=do-celular
+disallow=all
+allow=ulaw,alaw
+dtmf_mode=rfc4733
+direct_media=no
+rtp_symmetric=yes
+force_rport=yes
+identify_by=username
+; Confia no P-Asserted-Identity do app como numero de quem ligou para o chip.
+trust_id_inbound=yes
+auth=android-gw-auth
+aors=android-gw
+
+[android-gw-auth]
+type=auth
+auth_type=userpass
+username=android-gw
+password=__GW_SENHA__
+
+[android-gw]
+type=aor
+max_contacts=1
+; Se o celular trocar de IP ou porta, o registro novo toma o lugar do antigo.
+remove_existing=yes
+qualify_frequency=60

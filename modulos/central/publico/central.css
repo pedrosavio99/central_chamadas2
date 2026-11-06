@@ -1,0 +1,255 @@
+/**
+ * central.css - estilos do modulo central (prefixo .ch-).
+ * Papel: estender o design system do host (/estilos.css) so no que a tela de chamadas precisa.
+ * NAO faz: definir cor (so var(--token)), redefinir componentes do host nem usar seletor de id.
+ */
+
+/* ===== Filtros ===== */
+
+.ch-chip-n {
+  margin-left: 2px;
+}
+
+/* ===== Verificacoes antes de ligar ===== */
+
+.ch-saude {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 8px 0 16px;
+  padding: 6px 14px;
+  border-radius: var(--raio-cartao);
+  background: var(--superficie);
+  box-shadow: var(--sombra);
+}
+.ch-linha {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--separador);
+}
+.ch-linha:last-child {
+  border-bottom: 0;
+}
+.ch-linha-txt {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ch-linha-txt strong {
+  font-size: 15px;
+}
+.ch-linha-txt span {
+  font-size: 14px;
+  color: var(--texto-2);
+  overflow-wrap: anywhere;
+}
+.ch-ponto {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-top: 6px;
+  border-radius: var(--raio-pilula);
+  background: var(--texto-3);
+}
+.ch-n-ok {
+  background: var(--sucesso);
+}
+.ch-n-aviso {
+  background: var(--aviso);
+}
+.ch-n-erro {
+  background: var(--perigo);
+}
+.ch-n-espera {
+  background: var(--texto-3);
+}
+
+/* ===== Discador ===== */
+
+.ch-discador {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 8px 0 20px;
+}
+.ch-visor {
+  width: 100%;
+  min-height: 56px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--raio-cartao);
+  background: var(--superficie);
+  box-shadow: var(--sombra);
+  color: var(--texto);
+  font: inherit;
+  font-size: 28px;
+  letter-spacing: 0.02em;
+  text-align: center;
+}
+.ch-visor::placeholder {
+  color: var(--texto-3);
+}
+.ch-visor:focus {
+  outline: 2px solid var(--destaque);
+}
+.ch-teclado {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  max-width: 320px;
+  width: 100%;
+  margin: 0 auto;
+}
+.ch-tecla {
+  min-height: 56px;
+  border-radius: var(--raio-cartao);
+  background: var(--superficie);
+  box-shadow: var(--sombra);
+  font-size: 24px;
+  font-weight: 500;
+}
+.ch-tecla:active {
+  background: var(--preenchimento);
+}
+.ch-acoes {
+  max-width: 320px;
+  width: 100%;
+  margin: 0 auto;
+}
+.ch-ligar {
+  background: var(--sucesso-forte);
+}
+.ch-dica {
+  min-height: 1.45em;
+  margin: 0;
+  font-size: 14px;
+  text-align: center;
+  color: var(--texto-2);
+}
+
+/* ===== Faixa da chamada em andamento ===== */
+
+.ch-chamada {
+  position: sticky;
+  top: calc(var(--altura-barra) + 8px);
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 0;
+  padding: 12px 14px;
+  border-radius: var(--raio-cartao);
+  background: var(--sucesso-fundo);
+  box-shadow: var(--sombra);
+}
+.ch-ch-tocando {
+  background: var(--aviso-fundo);
+}
+.ch-chamada-txt {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ch-chamada-txt strong {
+  font-size: 20px;
+}
+.ch-chamada-txt span {
+  font-size: 14px;
+  color: var(--texto-2);
+}
+.ch-chamada-acoes {
+  display: flex;
+  gap: 8px;
+}
+.ch-btn-atender {
+  background: var(--sucesso-forte);
+}
+.ch-btn-desligar {
+  background: var(--perigo);
+}
+
+/* ===== Lista ===== */
+
+.ch-item {
+  cursor: pointer;
+}
+.ch-item-txt {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ch-item-txt span {
+  font-size: 14px;
+  color: var(--texto-2);
+}
+.ch-sinal {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--raio-pilula);
+  background: var(--preenchimento);
+  font-size: 18px;
+}
+.ch-st-atendida .ch-sinal {
+  color: var(--sucesso);
+}
+.ch-st-perdida .ch-sinal,
+.ch-st-falha .ch-sinal {
+  color: var(--perigo);
+}
+.ch-selo-atendida {
+  background: var(--sucesso-fundo);
+  color: var(--sucesso-forte);
+}
+.ch-selo-perdida {
+  background: var(--aviso-fundo);
+  color: var(--texto);
+}
+.ch-selo-falha {
+  background: var(--perigo-fundo);
+  color: var(--perigo);
+}
+.ch-recentes-topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.ch-link {
+  min-height: var(--toque);
+  padding: 0 4px;
+  font-size: 15px;
+  color: var(--destaque);
+}
+
+/* ===== Aviso de erro ===== */
+
+.ch-aviso {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 16px 0;
+  padding: 16px;
+  border-radius: var(--raio-cartao);
+  background: var(--perigo-fundo);
+}
+.ch-aviso span {
+  overflow-wrap: anywhere;
+}
+
+/* ===== Sheet ===== */
+
+.ch-sheet-acoes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 20px;
+}

@@ -1,0 +1,5 @@
+; CENTRAL-CHAMADAS (gerado pelo instalar.sh a partir de modules.conf.modelo)
+[modules]
+autoload=yes
+; O chan_sip antigo tambem escuta na porta 5060 e brigaria com o PJSIP. Esta central usa so o PJSIP.
+noload => chan_sip.so

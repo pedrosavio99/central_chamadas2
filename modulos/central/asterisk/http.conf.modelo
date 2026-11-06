@@ -1,0 +1,6 @@
+; CENTRAL-CHAMADAS (gerado pelo instalar.sh a partir de http.conf.modelo)
+; Escuta SO no proprio PC (127.0.0.1): WebSocket do navegador e ARI. Nada disso fica exposto na rede.
+[general]
+enabled=yes
+bindaddr=127.0.0.1
+bindport=8088

@@ -1,0 +1,41 @@
+; CENTRAL-CHAMADAS (gerado pelo instalar.sh a partir de extensions.conf.modelo)
+; Nao edite o arquivo em /etc/asterisk: edite o modelo e rode o instalar.sh de novo.
+
+[general]
+static=yes
+writeprotect=no
+clearglobalvars=no
+
+; ---------------------------------------------------------------- navegador -> celular
+; O que o ramal "atendente" pode discar. Tudo que nao casar aqui e recusado: limita fraude de ligacao.
+[de-atendente]
+; Teste de eco: devolve a sua voz. Nao usa o celular nem gasta chip.
+exten => 600,1,NoOp(Teste de eco do atendente)
+ same => n,Answer()
+ same => n,Wait(1)
+ same => n,Echo()
+ same => n,Hangup()
+
+; So numeros brasileiros: DDD + 8 digitos (fixo) ou DDD + 9 + 8 digitos (celular).
+; Nao ha 0800, 0300, 190, internacional nem premium: o padrao nao deixa passar.
+exten => _[1-9][1-9]XXXXXXXX,1,Goto(saida-celular,${EXTEN},1)
+exten => _[1-9][1-9]9XXXXXXXX,1,Goto(saida-celular,${EXTEN},1)
+
+[saida-celular]
+; Chamada para o celular gateway. O "r" avisa o navegador que esta chamando (o app nao manda early media).
+exten => _X.,1,NoOp(Saida para ${EXTEN} pelo celular gateway)
+ same => n,Dial(PJSIP/android-gw,60,rb(cabecalho-gw^s^1(${EXTEN})))
+ same => n,Hangup(${HANGUPCAUSE})
+
+; O app le o numero a discar no cabecalho X-VSA-Dial.
+[cabecalho-gw]
+exten => s,1,Set(PJSIP_HEADER(add,X-VSA-Dial)=${ARG1})
+ same => n,Return()
+
+; ---------------------------------------------------------------- celular -> navegador
+; O app manda INVITE para sip:android-gw@... quando o chip recebe uma ligacao.
+; Este contexto NAO tem nenhum padrao de discagem: o celular nao consegue ligar para fora por aqui.
+[do-celular]
+exten => android-gw,1,NoOp(Ligacao no chip, quem ligou: ${CALLERID(num)})
+ same => n,Dial(PJSIP/atendente,45)
+ same => n,Hangup()

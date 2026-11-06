@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="pt-BR" data-tema="sistema">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="/estilos.css">
+  <link rel="stylesheet" href="central.css">
+  <title>Central de chamadas</title>
+  <script>
+    // Antes do primeiro paint, para o tema salvo nao piscar o claro.
+    try { document.documentElement.setAttribute("data-tema", localStorage.getItem("2brain-tema") || "sistema"); } catch (e) {}
+  </script>
+</head>
+<body>
+  <header class="barra" id="barra">
+    <div class="barra-int">
+      <a class="icone-btn" href="/" aria-label="Voltar ao início">&#8249;</a>
+      <span class="barra-titulo">Central</span>
+      <div class="barra-acoes">
+        <button class="icone-btn" data-acao="tema" aria-label="Alternar tema">&#9680;</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="envolucro">
+    <h1 class="titulao">Central de chamadas</h1>
+    <p class="subtitulao" id="resumoTopo">Carregando...</p>
+
+    <div class="busca" id="caixaBusca" hidden>
+      <input id="campoBusca" type="search" inputmode="numeric" placeholder="Buscar pelo número" autocomplete="off" aria-label="Buscar pelo número">
+      <button class="limpar" data-acao="limpar-busca" aria-label="Limpar busca">&times;</button>
+    </div>
+
+    <div class="segmentado" id="abasGrupo" role="tablist">
+      <span class="indicador"></span>
+      <button class="ativo" data-aba="discar" role="tab">Discar</button>
+      <button data-aba="historico" role="tab">Histórico</button>
+    </div>
+
+    <div class="faixa-chips" id="filtros" hidden></div>
+
+    <!-- blocoChamada: faixa da chamada em andamento (nas duas abas). blocoCorpo: o conteudo da aba. -->
+    <div id="conteudo">
+      <div id="blocoChamada" hidden></div>
+      <div id="blocoCorpo"></div>
+    </div>
+  </main>
+
+  <div class="cortina" id="cortina" data-acao="fechar-sheet"></div>
+  <section class="sheet" id="sheet" aria-modal="true" role="dialog" aria-labelledby="sheetTitulo">
+    <div class="puxador"></div>
+    <div class="sheet-cab">
+      <h2 id="sheetTitulo"></h2>
+      <button class="icone-btn" id="btnFechaSheet" data-acao="fechar-sheet" aria-label="Fechar">&times;</button>
+    </div>
+    <div class="sheet-corpo" id="sheetCorpo"></div>
+  </section>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <audio id="audioRemoto" autoplay></audio>
+
+  <script src="vendor/jssip.min.js"></script>
+  <script src="central.js"></script>
+</body>
+</html>

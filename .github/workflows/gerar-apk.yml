@@ -1,0 +1,129 @@
+# Gerar APK do celular gateway
+#
+# Compila o app Voice SIP Agent (https://github.com/sparkcyf/android-voice-sip-agent) e entrega o APK
+# como artefato. O repositorio do app NAO publica APK pronto, entao a gente compila aqui.
+#
+# Como usar: aba Actions > "Gerar APK do celular gateway" > Run workflow. Leva de 15 a 40 minutos
+# (compila OpenSSL, Opus e PJSIP para Android do zero). Quando acabar, o APK fica no fim da pagina da
+# execucao, em "Artifacts". Ele vem num .zip: extraia e instale o .apk no celular.
+#
+# Seguranca: o app ganha poderes de shell no celular via Shizuku. Por isso o codigo e FIXADO por hash
+# de commit (o padrao abaixo e o v0.4.1) e as actions abaixo tambem sao fixadas por hash. Para usar
+# outra versao, confira o codigo antes e cole o hash novo no campo "versao".
+
+name: Gerar APK do celular gateway
+
+on:
+  workflow_dispatch:
+    inputs:
+      versao:
+        description: "Commit ou tag do app a compilar (padrao: v0.4.1, fixado pelo hash do commit)"
+        required: true
+        default: "298d64b89b13e7737708972947390d2d84450200"
+
+# O workflow so le o codigo; nao precisa escrever em nada do seu repositorio.
+permissions:
+  contents: read
+
+# Duas compilacoes ao mesmo tempo disputariam as mesmas pastas do script nativo.
+concurrency:
+  group: gerar-apk
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      # Versao exigida pelo build-pjsua2.sh do app (esta escrita dentro do script).
+      NDK_VERSAO: "28.2.13676358"
+    steps:
+      - name: Baixar o codigo do app
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: sparkcyf/android-voice-sip-agent
+          ref: ${{ inputs.versao }}
+          path: app
+          persist-credentials: false
+
+      - name: Instalar o JDK 17
+        # actions/setup-java v6.2.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Instalar o Android SDK e o NDK
+        # android-actions/setup-android v4.0.4
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd
+        env:
+          # Pasta nova e gravavel: a do runner pode ser somente leitura para instalar o NDK.
+          ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
+        with:
+          # A plataforma (compileSdk) e as build-tools o proprio Gradle baixa; o NDK precisa estar
+          # la antes, porque quem usa e o script nativo, que roda fora do Gradle.
+          packages: "platform-tools ndk;28.2.13676358"
+
+      - name: Instalar o swig
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y swig
+
+      - name: Conferir as ferramentas
+        run: |
+          java -version
+          swig -version
+          test -d "$ANDROID_HOME/ndk/$NDK_VERSAO" || { echo "NDK $NDK_VERSAO nao foi instalado em $ANDROID_HOME/ndk"; ls "$ANDROID_HOME/ndk" || true; exit 1; }
+          echo "ANDROID_HOME=$ANDROID_HOME"
+
+      - name: Compilar a parte nativa (PJSIP, OpenSSL e Opus)
+        working-directory: app
+        env:
+          # So arm64: e o unico que o app empacota (abiFilters), e o celular real e arm64.
+          ABIS: arm64-v8a
+          APP_PLATFORM: android-30
+        run: bash sip-pjsua2/native/build-pjsua2.sh
+
+      - name: Conferir o resultado da parte nativa
+        working-directory: app
+        run: |
+          test -f sip-pjsua2/src/generated/jniLibs/arm64-v8a/libpjsua2.so || { echo "libpjsua2.so nao foi gerada"; find sip-pjsua2/src -maxdepth 4 | head -50; exit 1; }
+          ls -l sip-pjsua2/src/generated/jniLibs/arm64-v8a/
+
+      - name: Compilar o APK
+        working-directory: app
+        run: ./gradlew --no-daemon :app:assembleDebug
+
+      - name: Separar o APK e calcular o hash
+        working-directory: app
+        run: |
+          set -euo pipefail
+          apks=(app/build/outputs/apk/debug/*.apk)
+          [ "${#apks[@]}" -eq 1 ] && [ -f "${apks[0]}" ] || { echo "esperava 1 APK em app/build/outputs/apk/debug, achei: ${apks[*]}"; exit 1; }
+          mkdir -p ../saida
+          curto="$(git rev-parse --short=10 HEAD)"
+          nome="voice-sip-agent-${curto}-debug.apk"
+          cp "${apks[0]}" "../saida/${nome}"
+          (cd ../saida && sha256sum "${nome}" | tee "${nome}.sha256")
+          {
+            echo "## APK gerado"
+            echo
+            echo "Arquivo: \`${nome}\`"
+            echo
+            echo "Commit do app: \`$(git rev-parse HEAD)\`"
+            echo
+            echo "SHA-256: \`$(cut -d' ' -f1 "../saida/${nome}.sha256")\`"
+            echo
+            echo "Baixe em **Artifacts** (fim desta pagina), extraia o .zip e instale o .apk no celular."
+            echo "E uma build **debug** (assinada com a chave de depuracao): serve para uso proprio, nao para distribuir."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publicar o APK como artefato
+        # actions/upload-artifact v7.0.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: voice-sip-agent-apk
+          path: saida/*
+          if-no-files-found: error
+          retention-days: 30

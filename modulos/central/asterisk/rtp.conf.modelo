@@ -1,0 +1,8 @@
+; CENTRAL-CHAMADAS (gerado pelo instalar.sh a partir de rtp.conf.modelo)
+[general]
+; Faixa curta e conhecida: facilita liberar no firewall. Cada chamada usa 2 portas (RTP e RTCP) por perna.
+rtpstart=10000
+rtpend=10100
+; O navegador (WebRTC) exige ICE.
+icesupport=yes
+strictrtp=yes

@@ -1,0 +1,11 @@
+; CENTRAL-CHAMADAS (gerado pelo instalar.sh a partir de ari.conf.modelo)
+; ARI so de leitura: o servidor da Central pergunta "o celular esta online?" e nada mais.
+[general]
+enabled=yes
+pretty=no
+
+[central]
+type=user
+read_only=yes
+password_format=plain
+password=__ARI_SENHA__
