@@ -129,6 +129,63 @@ jobs:
           test -d "$ANDROID_HOME/ndk/$NDK_VERSAO" || { echo "NDK $NDK_VERSAO nao foi instalado em $ANDROID_HOME/ndk"; ls "$ANDROID_HOME/ndk" || true; exit 1; }
           echo "ANDROID_HOME=$ANDROID_HOME"
 
+      - name: Baixar PJSIP, OpenSSL e Opus com novas tentativas
+        # O script do app baixa os tres uma vez so, sem repetir: uma queda de rede derruba o build inteiro (ja aconteceu
+        # com o downloads.xiph.org). Aqui baixamos antes, com tentativas e espelhos, e conferimos o mesmo SHA-256 que o
+        # script confere. Se o arquivo estiver la e correto, o script do app nao baixa nada.
+        working-directory: app
+        run: |
+          set -euo pipefail
+          script=sip-pjsua2/native/build-pjsua2.sh
+          pasta=sip-pjsua2/build/pjproject
+          mkdir -p "$pasta"
+          valor() { sed -n "s/^$1=//p" "$script" | head -n 1; }
+
+          baixar() {
+            local nome="$1" hash="$2"
+            shift 2
+            local destino="$pasta/$nome"
+            if [ -f "$destino" ] && echo "$hash  $destino" | sha256sum -c - >/dev/null 2>&1; then
+              echo "$nome ja esta aqui e confere."
+              return 0
+            fi
+            rm -f "$destino" "$destino.part"
+            local url
+            for url in "$@"; do
+              echo "Baixando $nome de $url"
+              if curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 300 -o "$destino.part" "$url"; then
+                if echo "$hash  $destino.part" | sha256sum -c - >/dev/null 2>&1; then
+                  mv "$destino.part" "$destino"
+                  echo "$nome baixado e conferido."
+                  return 0
+                fi
+                echo "O SHA-256 de $nome nao confere nesse endereco; descartando."
+              else
+                echo "Nao consegui baixar de $url."
+              fi
+              rm -f "$destino.part"
+            done
+            echo "ERRO: nao consegui baixar $nome de nenhum endereco. Rode o workflow de novo (Re-run all jobs): costuma ser queda de rede passageira."
+            return 1
+          }
+
+          pj="$(valor PJ_VERSION)"; pj_hash="$(valor PJ_SHA256)"
+          ossl="$(valor OSSL_VERSION)"; ossl_hash="$(valor OSSL_SHA256)"
+          opus="$(valor OPUS_VERSION)"; opus_hash="$(valor OPUS_SHA256)"
+          if [ -z "$pj" ] || [ -z "$pj_hash" ] || [ -z "$ossl" ] || [ -z "$ossl_hash" ] || [ -z "$opus" ] || [ -z "$opus_hash" ]; then
+            echo "Nao achei as versoes e os hashes no script do app (versao diferente da padrao?). Deixo o proprio script baixar."
+            exit 0
+          fi
+
+          baixar "pjproject-$pj.tar.gz" "$pj_hash" \
+            "https://github.com/pjsip/pjproject/archive/refs/tags/$pj.tar.gz"
+          baixar "openssl-$ossl.tar.gz" "$ossl_hash" \
+            "https://github.com/openssl/openssl/releases/download/openssl-$ossl/openssl-$ossl.tar.gz"
+          baixar "opus-$opus.tar.gz" "$opus_hash" \
+            "https://downloads.xiph.org/releases/opus/opus-$opus.tar.gz" \
+            "https://ftp.osuosl.org/pub/xiph/releases/opus/opus-$opus.tar.gz" \
+            "https://github.com/xiph/opus/releases/download/v$opus/opus-$opus.tar.gz"
+
       - name: Compilar a parte nativa (PJSIP, OpenSSL e Opus)
         working-directory: app
         env:

@@ -321,6 +321,7 @@ Para acompanharmos juntos o que acontece, há logs nos dois lados e dá para cop
 | Eco | Alto-falante e microfone juntos | Fone de ouvido |
 | Áudio picotado ou com atraso grande | Rede ruim em um dos lados | Teste com Wi-Fi bom nos dois lados; é uma limitação do modo grátis por WebSocket |
 | Caiu no meio da chamada | O Render reiniciou o serviço, ou a rede do celular caiu | A tela e o app reconectam sozinhos em segundos; ligue de novo |
+| Workflow vermelho no passo "Baixar PJSIP, OpenSSL e Opus", ou "SSL_ERROR_SYSCALL" ao baixar | Queda de rede passageira em um dos sites de download | O passo já tenta 5 vezes em até 3 endereços. Se ainda assim falhar, abra a execução e toque em **Re-run all jobs** |
 | Android recusa instalar o APK novo ("app não instalado" ou conflito de assinatura) | O APK novo foi assinado com outra chave que o instalado | Desinstale o app antigo, instale o novo e escaneie o QR da aba 2. Para não repetir, faça o passo 1.5 |
 | QR de download do APK não aparece | Repositório privado, workflow ainda não terminou, ou a Vercel não expõe as variáveis de sistema | Veja 1.4: passe o `.apk` por cabo/Drive, espere o workflow, ou crie `APK_URL` na Vercel |
 | "Ocupado" ao ligar | Já há uma chamada na linha | Encerre a atual |
