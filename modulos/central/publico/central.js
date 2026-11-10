@@ -50,7 +50,18 @@ var CAUSAS = {
   "Address Incomplete": "Número incompleto",
   "Incompatible SDP": "Áudio incompatível",
   "Bad Media Description": "Áudio incompatível",
-  "Internal Error": "Erro interno do navegador"
+  "Internal Error": "Erro interno do navegador",
+  // Modo online (relay): o que o celular e o relay contam.
+  celular_offline: "O celular não está conectado ao relay",
+  celular_caiu: "O celular perdeu a conexão no meio da chamada",
+  relay_caiu: "A conexão com o relay caiu",
+  sem_resposta_do_celular: "O celular não confirmou o desligamento",
+  numero_invalido: "Número inválido",
+  erro_audio: "Erro de áudio no celular",
+  proibido: "O celular não aceita ligar para esse número (emergência ou fora dos prefixos permitidos)",
+  erro_rede: "O celular perdeu a rede no meio da chamada",
+  falha: "Falha interna no celular (veja o Registro)",
+  normal: "Encerrada"
 };
 
 /* ===== Estado unico ===== */
@@ -439,6 +450,9 @@ function rotuloGateway() {
 }
 
 function saudeLinhas() {
+  if (S.config && S.config.online) {
+    return saudeLinhasOnline();
+  }
   var c = S.config || {};
   var linhas = [];
   var e = S.estado;
@@ -506,6 +520,9 @@ function motivoBloqueio() {
   if (c.somenteLeitura) {
     return "Modo somente leitura (READ_ONLY=1): ligações desativadas.";
   }
+  if (c.online) {
+    return motivoBloqueioOnline();
+  }
   if (typeof JsSIP === "undefined") {
     return "A biblioteca JsSIP não carregou.";
   }
@@ -546,7 +563,7 @@ function renderSaude() {
 /* --- discador --- */
 
 function htmlDiscador() {
-  var h = '<div id="blocoSaude"></div><div id="blocoAudio"></div><section class="ch-discador">';
+  var h = '<div id="blocoGuia"></div><div id="blocoSaude"></div><div id="blocoAudio"></div><section class="ch-discador">';
   h +=
     '<input id="campoNumero" class="ch-visor" type="tel" inputmode="tel" autocomplete="off"' +
     ' placeholder="DDD + número" aria-label="Número a discar" value="' + esc(S.numero) + '">';
@@ -657,6 +674,10 @@ function renderResumo() {
     el.textContent = "Não foi possível carregar";
     return;
   }
+  if (S.config && S.config.online) {
+    el.textContent = resumoOnline();
+    return;
+  }
   var partes = ["Ramal " + (S.usuario ? S.usuario.ramal : "") + ": " + rotuloRamal(), "Gateway: " + rotuloGateway()];
   var fresco = S.carregadoEm ? "estado de " + hora(S.carregadoEm, true) + (S.doCache ? " (cache)" : " (ao vivo)") : "";
   el.textContent = partes.join(" · ") + (fresco ? " · " + fresco : "");
@@ -718,9 +739,14 @@ function renderCorpo() {
       CORPO_MODO = "discar";
       renderAudio();
     }
+    renderGuia();
     renderSaude();
     atualizarDiscador();
     renderRecentes();
+    return;
+  }
+  if (S.aba === "registro" && S.config && S.config.online) {
+    renderRegistroAba();
     return;
   }
   corpo.innerHTML = htmlLista(mudou);
@@ -851,6 +877,11 @@ function registrarHistorico(item) {
   item.id = "l" + uid(); // provisorio: o servidor devolve o id definitivo
   S.itens.unshift(item);
   render();
+  if (S.config && S.config.online) {
+    // Na Vercel nao ha onde guardar: o historico fica so neste navegador.
+    historicoLocalGravar(S.itens);
+    return;
+  }
   api("/api/chamadas", { method: "POST", body: JSON.stringify(item) })
     .then(function (r) {
       if (r && r.item && r.item.id) {
@@ -977,6 +1008,10 @@ function iniciarRamal() {
   }
   if (c.mock) {
     S.ramal = "mock";
+    return;
+  }
+  if (c.online) {
+    iniciarOnline();
     return;
   }
   if (c.somenteLeitura || !c.sip) {
@@ -1780,6 +1815,9 @@ function textoDiagnostico(d) {
     return "Áudio: o navegador não está enviando som. Confira o microfone no cartão Áudio.";
   }
   if (d.semRec >= 4) {
+    if (S.config && S.config.online) {
+      return "Áudio: nada chega do celular pelo relay. Veja a aba Registro (o app precisa estar com Take over calls ligado).";
+    }
     return "Áudio: nada chega do Asterisk (rede, ICE ou DTLS). Não é o microfone.";
   }
   if (AUDIO && AUDIO.srcObject && AUDIO.paused) {
@@ -1802,9 +1840,35 @@ function escreverDiagnostico(c, texto) {
   }
 }
 
+function aplicarMedicao(c, d, env, rec, nivel) {
+  d.n++;
+  if (env > d.env) {
+    d.env = env;
+    d.semEnv = 0;
+  } else {
+    d.semEnv++;
+  }
+  if (rec > d.rec) {
+    d.rec = rec;
+    d.semRec = 0;
+  } else {
+    d.semRec++;
+  }
+  if (nivel > d.pico) {
+    d.pico = nivel;
+  }
+  escreverDiagnostico(c, textoDiagnostico(d));
+}
+
 function medirAudioChamada() {
   var c = S.chamada;
   var d = DIAG;
+  if (c && d && c.estado === "atendida" && SESSAO && typeof SESSAO.estatisticas === "function") {
+    // Modo online: o proprio ramal online conta os quadros (nao ha WebRTC para perguntar).
+    var st = SESSAO.estatisticas();
+    aplicarMedicao(c, d, st.env, st.rec, st.nivel);
+    return;
+  }
   var pc = SESSAO && SESSAO.connection;
   if (!c || !d || c.estado !== "atendida" || !pc || typeof pc.getStats !== "function") {
     return;
@@ -1829,23 +1893,7 @@ function medirAudioChamada() {
           nivel = r.audioLevel;
         }
       });
-      d.n++;
-      if (env > d.env) {
-        d.env = env;
-        d.semEnv = 0;
-      } else {
-        d.semEnv++;
-      }
-      if (rec > d.rec) {
-        d.rec = rec;
-        d.semRec = 0;
-      } else {
-        d.semRec++;
-      }
-      if (nivel > d.pico) {
-        d.pico = nivel;
-      }
-      escreverDiagnostico(c, textoDiagnostico(d));
+      aplicarMedicao(c, d, env, rec, nivel);
     },
     function () {}
   );
@@ -1865,7 +1913,7 @@ var TIMER_CEL_CONSULTA = 0;
 var TIMER_CEL_QR = 0;
 var TIMER_CEL_LIMPAR = 0;
 var COMANDO_APK = "python3 -m zipfile -e ~/Downloads/voice-sip-agent-apk.zip modulos/central/apk-celular";
-S.celular = null; // { aba, carregando, erro, dados, apk, apkErro, ips, ip, outro, par, qrVisivel, viuOffline }
+S.celular = null; // { aba, carregando, erro, dados, apk, apkErro, ips, ip, outro, par, relato, qrVisivel, viuOffline }
 
 function ipValido(ip) {
   var m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(String(ip || "").trim());
@@ -1910,6 +1958,9 @@ function novoPareamento() {
 
 /** O JSON que o app importa (formato voice-sip-agent-config v1). So as chaves que a Central conhece. */
 function jsonCelular() {
+  if (S.config && S.config.online) {
+    return jsonCelularOnline();
+  }
   var c = S.celular;
   var d = c && c.dados;
   if (!d) {
@@ -1922,10 +1973,24 @@ function jsonCelular() {
     routing: { target: d.usuario }
   };
   if (c.par) {
-    // Chave extra que so o nosso app entende: ele a separa antes de ler o arquivo.
+    // Chaves extras que so o nosso app entende: ele as separa antes de ler o arquivo.
     cfg.adbPairing = { name: c.par.nome, password: c.par.senha };
+    // Onde o app conta em que passo da configuracao esta (a lista ao vivo do painel).
+    var central = urlCentral();
+    if (central) {
+      cfg.central = { url: central };
+    }
   }
   return JSON.stringify(cfg);
+}
+
+/** Endereco da Central visto pelo celular (o IP escolhido no painel), sem a barra final. */
+function urlCentral() {
+  var c = S.celular;
+  if (!c || !c.ip || !String(c.ip).trim()) {
+    return "";
+  }
+  return location.protocol + "//" + String(c.ip).trim() + (location.port ? ":" + location.port : "") + BASE;
 }
 
 /** O QR que o Android le em "Parear dispositivo com codigo QR": WIFI:T:ADB;S:nome;P:senha;; */
@@ -2000,10 +2065,15 @@ function renderCelAba() {
   $("#chCelApk").hidden = c.aba !== "apk";
   $("#chCelCfg").hidden = c.aba !== "config";
   $("#chCelPar").hidden = c.aba !== "par";
+  $("#chCelRelato").hidden = c.aba === "apk";
   var ipCaixa = $("#chCelIp");
   if (ipCaixa) {
     ipCaixa.hidden = c.aba === "par"; // o QR de pareamento nao depende do IP
   }
+}
+
+function c0online() {
+  return !!(S.celular && S.celular.online);
 }
 
 function renderCelEstado() {
@@ -2015,10 +2085,15 @@ function renderCelEstado() {
   var nivel = "espera";
   var titulo = "Consultando";
   var texto = "Perguntando ao Asterisk...";
-  if (celularConectado()) {
+  if (c0online() && !celularConectado()) {
+    var fase = Online.estado().fase;
+    nivel = fase === "online" ? "aviso" : "espera";
+    titulo = fase === "online" ? "Aguardando o celular" : "Entre na Central primeiro";
+    texto = fase === "online" ? "Siga os passos desta aba. Esta tela avisa quando o celular entrar no relay." : "Digite o código de acesso na tela principal.";
+  } else if (celularConectado()) {
     nivel = "ok";
     titulo = "Celular conectado";
-    texto = "O Asterisk já vê o celular registrado.";
+    texto = c0online() ? "O relay já vê o celular conectado." : "O Asterisk já vê o celular registrado.";
   } else if (e && e.ari && !e.ari.ok) {
     nivel = "aviso";
     titulo = "Sem resposta do Asterisk";
@@ -2049,6 +2124,10 @@ function renderCelApk() {
   }
   if (c.apkErro) {
     el.innerHTML = avisoCelular(c.apkErro.message, c.apkErro.dica);
+    return;
+  }
+  if (c.online) {
+    el.innerHTML = htmlApkOnline();
     return;
   }
   var a = c.apk && c.apk.apk;
@@ -2095,7 +2174,11 @@ function renderCelQr() {
     el.innerHTML = avisoCelular(c.erro.message, c.erro.dica);
     return;
   }
-  if (!ipValido(c.ip)) {
+  if (c.online && !Online.estado().tokenCelular) {
+    el.innerHTML = avisoCelular("Entre na Central primeiro", "O QR leva o endereço do relay e a senha do celular, que só existem depois que você entra com o código de acesso.");
+    return;
+  }
+  if (!c.online && !ipValido(c.ip)) {
     el.innerHTML = avisoCelular("Informe o IP deste computador na rede", "Algo como 192.168.0.10. No terminal: hostname -I");
     return;
   }
@@ -2113,6 +2196,72 @@ function renderCelQr() {
   el.innerHTML =
     '<div class="ch-qr-caixa">' + h +
     '<button class="btn btn-suave" data-acao="celular-qr">' + (c.qrVisivel ? "Esconder QR" : "Mostrar QR") + "</button></div>";
+}
+
+/**
+ * Os passos do celular ao vivo, a partir do que o app relata (POST /api/celular/relato). O app so comeca a
+ * relatar depois de ler o QR da aba 2. O primeiro passo que falta mostra o motivo; os seguintes ficam em espera.
+ */
+function renderCelRelato() {
+  var el = $("#chCelRelato");
+  var c = S.celular;
+  if (!el || !c) {
+    return;
+  }
+  var r = c.relato;
+  if (!r) {
+    el.innerHTML = celularConectado()
+      ? ""
+      : '<p class="ch-dica">Ainda não recebi nada do app. Depois de escanear o QR da aba 2 no app, os passos do celular aparecem aqui ao vivo' +
+        (c.online ? " (basta o celular ter internet)." : " (o celular precisa estar na mesma rede que este computador).") + "</p>";
+    return;
+  }
+  var falhou = r.helper === "PAIRING_FAILED" || r.helper === "ERROR";
+  var passos = [
+    { ok: r.configurado, nome: "Servidor configurado no app", falta: "No app, depois de escanear o QR da aba 2, toque em Import." },
+    {
+      ok: r.pareado,
+      nome: "Pareado com a Depuração sem fio",
+      falta: r.helper === "PAIRING_FAILED" && r.helperDetalhe
+        ? "O pareamento falhou: " + r.helperDetalhe
+        : "Faça a aba 3: Depuração sem fio, Parear dispositivo com código QR."
+    },
+    { ok: r.helper === "CONNECTED", nome: "Acesso privilegiado (helper)", falta: r.helperDetalhe || r.helper },
+    { ok: r.acesso, nome: "Acesso às chamadas", falta: r.detalhe },
+    { ok: r.audio, nome: "Áudio das chamadas", falta: r.detalhe },
+    c.online
+      ? { ok: Online.estado().telefone, nome: "Conectado ao relay (online)", falta: r.sipDetalhe || r.detalhe || "O app ainda não entrou no relay." }
+      : { ok: r.sip, nome: "Registro no Asterisk", falta: r.sipDetalhe || r.detalhe }
+  ];
+  var achouFalta = false;
+  var h = '<p class="ch-dica"><strong>Passo a passo do celular (ao vivo)</strong></p>';
+  for (var i = 0; i < passos.length; i++) {
+    var p = passos[i];
+    var nivel = "ok";
+    var txt = "";
+    if (!p.ok) {
+      if (!achouFalta) {
+        achouFalta = true;
+        nivel = falhou && i === 2 ? "erro" : "aviso";
+        txt = p.falta || "";
+      } else {
+        nivel = "espera";
+      }
+    }
+    h +=
+      '<div class="ch-linha"><span class="ch-ponto ch-n-' + nivel + '"></span>' +
+      '<div class="ch-linha-txt"><strong>' + esc(p.nome) + "</strong>" + (txt ? "<span>" + esc(txt) + "</span>" : "") + "</div></div>";
+  }
+  if (r.idadeMs > 20000 && !(c.online && Online.estado().telefone)) {
+    h +=
+      '<p class="ch-cel-aviso">Sem notícias do app há ' + Math.round(r.idadeMs / 1000) +
+      " s. Ele pode ter sido fechado ou ter saído da rede.</p>";
+  }
+  h +=
+    '<details class="ch-cel-log"><summary>Registro do app (para suporte)</summary><pre class="ch-cel-cmd">' +
+    esc((r.android ? "Android " + r.android + "\n" : "") + (r.log || []).join("\n")) +
+    "</pre></details>";
+  el.innerHTML = h;
 }
 
 /** O QR da aba 3 (pareamento). Segue o mesmo "esconder por seguranca" do QR da aba 2. */
@@ -2134,7 +2283,7 @@ function renderCelIp() {
   if (!el) {
     return;
   }
-  if (!c || c.carregando || (!c.dados && !c.apk)) {
+  if (!c || c.online || c.carregando || (!c.dados && !c.apk)) {
     el.innerHTML = "";
     return;
   }
@@ -2181,11 +2330,12 @@ function htmlCelular() {
     "<li>Antes, na aba <strong>2. Configurar</strong>, escaneie o QR no app. É ali que o app recebe a senha deste pareamento.</li>" +
     "<li>No celular (no mesmo Wi-Fi do computador): Configurações, Opções do desenvolvedor, ligue a <strong>Depuração sem fio</strong> (Wireless debugging) e toque nela para entrar.</li>" +
     "<li>Toque em <strong>Parear dispositivo com código QR</strong> (Pair device with QR code). A câmera abre: aponte para o QR abaixo.</li>" +
-    "<li>Pronto. O app pareia sozinho e avisa numa notificação. Não digite código nenhum.</li>" +
+    "<li>Pronto. O app pareia sozinho e avisa numa notificação. Não digite código nenhum. Acompanhe os passos ao vivo logo abaixo do QR.</li>" +
     "</ol>" +
     '<div id="chCelParQr"></div>' +
     '<p class="ch-dica">É uma vez só. O QR contém a senha do pareamento: não tire foto; ele se esconde sozinho em 2 minutos. Se fechar esta janela, os QRs mudam: escaneie a aba 2 de novo.</p>' +
     "</div>" +
+    '<div id="chCelRelato"></div>' +
     '<div id="chCelIp"></div>' +
     "</div>"
   );
@@ -2203,6 +2353,18 @@ function agendarQr() {
   }, QR_VISIVEL_MS);
 }
 
+/** O que o app do celular relatou nesta sessao do painel (ou null). Falha de rede nao atrapalha o resto. */
+function lerRelatoCelular(meu) {
+  if (!meu.par || meu.online) {
+    return Promise.resolve();
+  }
+  return api("/api/celular/relato?sid=" + encodeURIComponent(meu.par.nome))
+    .then(function (d) {
+      meu.relato = d && d.relato ? d.relato : null;
+    })
+    .catch(function () {});
+}
+
 /** Pergunta o estado ao Asterisk enquanto o painel esta aberto, para avisar quando o celular registrar. */
 function consultarCelular() {
   var meu = S.celular;
@@ -2216,7 +2378,7 @@ function consultarCelular() {
   if (document.hidden) {
     return;
   }
-  carregarEstado().then(function () {
+  Promise.all([carregarEstado(), lerRelatoCelular(meu)]).then(function () {
     if (S.celular !== meu) {
       return;
     }
@@ -2233,6 +2395,7 @@ function consultarCelular() {
       renderCelQr();
       renderCelParQr();
     }
+    renderCelRelato();
     renderCelEstado();
     render();
   });
@@ -2270,6 +2433,10 @@ function lerApkCelular(avisar) {
 }
 
 function abrirCelular() {
+  if (S.config && S.config.online) {
+    abrirCelularOnline();
+    return;
+  }
   pararCelular();
   var e0 = S.estado;
   var meu = {
@@ -2283,6 +2450,7 @@ function abrirCelular() {
     ip: "",
     outro: false,
     par: novoPareamento(),
+    relato: null,
     qrVisivel: true,
     viuOffline: !!(e0 && e0.ari && e0.ari.ok && !celularConectado())
   };
@@ -2294,6 +2462,7 @@ function abrirCelular() {
   renderCelIp();
   renderCelQr();
   renderCelParQr();
+  renderCelRelato();
   var pCel = api("/api/celular")
     .then(function (d) {
       meu.dados = exigirOk(d);
@@ -2355,7 +2524,7 @@ function trocarAbaCelular(aba) {
     agendarQr();
   }
   renderCelAba();
-  if (aba === "apk" && !c.carregando && !(c.apk && c.apk.apk)) {
+  if (aba === "apk" && !c.online && !c.carregando && !(c.apk && c.apk.apk)) {
     lerApkCelular(false);
   }
 }
@@ -2401,6 +2570,10 @@ function digitarIpCelular(valor) {
 /* ===== 9. Carregamento ===== */
 
 function carregarEstado() {
+  if (S.config && S.config.online) {
+    onSincronizar();
+    return Promise.resolve();
+  }
   return api("/api/estado")
     .then(function (d) {
       S.estado = exigirOk(d);
@@ -2415,6 +2588,10 @@ function carregarEstado() {
 }
 
 function carregarChamadas() {
+  if (S.config && S.config.online) {
+    S.itens = historicoLocalLer();
+    return Promise.resolve();
+  }
   return api("/api/chamadas").then(function (d) {
     S.itens = exigirOk(d).itens || [];
   });
@@ -2522,6 +2699,8 @@ function acao(nome, alvo) {
     mockChegou();
   } else if (nome === "recarregar") {
     carregar();
+  } else if (typeof acaoOnline === "function") {
+    acaoOnline(nome, alvo);
   }
 }
 

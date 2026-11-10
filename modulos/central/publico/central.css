@@ -419,6 +419,18 @@
 .segmentado.ch-cel-abas {
   --n: 3;
 }
+.ch-cel-log {
+  margin-top: 8px;
+}
+.ch-cel-log summary {
+  cursor: pointer;
+  font-size: 13px;
+}
+.ch-cel-log .ch-cel-cmd {
+  max-height: 220px;
+  margin-top: 6px;
+  overflow: auto;
+}
 .segmentado.ch-cel-abas button {
   padding: 0 4px;
   font-size: 14px;
@@ -462,4 +474,99 @@
 }
 .ch-cel-cmd {
   white-space: pre-wrap;
+}
+
+
+/* ===== Modo online: passo a passo, guia e registro ===== */
+
+.ch-guia {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 8px 0 16px;
+  padding: 16px;
+  border-radius: var(--raio-cartao);
+  background: var(--superficie);
+  box-shadow: var(--sombra);
+}
+.ch-guia-passo {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--destaque);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ch-guia-titulo {
+  margin: 0;
+  font-size: 20px;
+}
+.ch-guia-lembrar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 14px;
+  color: var(--texto-2);
+}
+.ch-guia-lim {
+  font-size: 14px;
+  color: var(--texto-2);
+}
+.ch-guia-lim summary,
+.ch-guia-sec summary {
+  cursor: pointer;
+}
+.ch-guia-lim ul,
+.ch-guia-lista {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ch-guia-corpo {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 15px;
+}
+.ch-guia-sec {
+  padding: 10px 14px;
+  border-radius: var(--raio-cartao);
+  background: var(--preenchimento);
+}
+.ch-guia-sec summary {
+  font-weight: 600;
+}
+.ch-guia-sec p {
+  margin: 8px 0 0;
+  color: var(--texto-2);
+}
+.ch-guia-sec .ch-cel-passos {
+  margin-top: 8px;
+}
+.ch-reg {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ch-reg-estado {
+  font-size: 13px;
+  color: var(--texto-2);
+}
+.ch-log {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 60vh;
+  overflow: auto;
+  border-radius: var(--raio-cartao);
+  background: var(--preenchimento);
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.ch-guia .ch-dica,
+.ch-reg .ch-dica {
+  text-align: left;
 }

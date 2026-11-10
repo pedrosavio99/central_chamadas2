@@ -4,3 +4,5 @@ node_modules/
 .DS_Store
 *.secret
 modulos/central/asterisk/gerado/
+modulos/central/apk-celular/
+.central-online-backup/

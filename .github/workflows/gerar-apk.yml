@@ -13,12 +13,16 @@
 #   2. sem-shizuku.patch troca o Shizuku por um cliente ADB dentro do proprio app: ele se pareia uma vez
 #                       com a Depuracao sem fio do celular e inicia sozinho o helper de ligacoes.
 #                       Mexe no modulo privileged e em algumas telas. Leia antes de compilar.
+#                       Tambem acrescenta o modo "online (relay)": o celular conecta no relay da Central pela
+#                       internet (WebSocket, biblioteca OkHttp do Maven Central) em vez de falar SIP com o Asterisk,
+#                       e o botao "Copy log" na tela do app. Detalhes em apk/LEIAME.md.
 #
 # Seguranca: o app ganha poderes de shell no celular (pela Depuracao sem fio). Por isso o codigo e FIXADO
 # por hash de commit (o padrao abaixo e o v0.4.1) e as actions abaixo tambem sao fixadas por hash. Para usar
 # outra versao, confira o codigo antes e cole o hash novo no campo "versao".
 #
-# A biblioteca libadb-android (cliente ADB, Apache-2.0 ou GPL-3.0+) e baixada do JitPack na compilacao.
+# A biblioteca libadb-android (cliente ADB, Apache-2.0 ou GPL-3.0+) e baixada do JitPack na compilacao; a OkHttp
+# (Apache-2.0), do Maven Central.
 
 name: Gerar APK do celular gateway
 

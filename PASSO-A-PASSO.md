@@ -1,8 +1,12 @@
-# Passo a passo da v1
+# Passo a passo do modo local (Asterisk no seu PC)
+
+> **Este guia é do modo local.** Para usar de qualquer rede, com a Central na Vercel e o relay no Render (tudo grátis),
+> siga o **`MANUAL.md`**. Aqui o Asterisk roda no seu PC e o celular precisa estar no mesmo Wi-Fi.
 
 Este guia leva você do zero até a primeira ligação real pelo navegador, em 7 etapas curtas. Cada etapa diz o
 comando, o que deve aparecer e o que fazer se não aparecer. **Só siga para a próxima etapa quando a atual deu
-certo.** Se travar, pare e me mande o que a etapa pede (está no fim de cada uma).
+certo.** Se travar, pare e me mande o que a etapa pede (está no fim de cada uma). Para o uso do dia a dia (celular e
+site), veja o **`MANUAL.md`**.
 
 ## 0. Leia antes (limites, custos e o que NÃO foi testado)
 
@@ -16,8 +20,8 @@ certo.** Se travar, pare e me mande o que a etapa pede (está no fim de cada uma
 - Enquanto "Take over calls" estiver ligado no app, as ligações recebidas no chip tocam no navegador, **não no
   celular**.
 - Cada chamada feita gasta minutos do plano do chip. Teste primeiro com o seu próprio número.
-- Funciona só no seu PC, por `http://localhost:3333/central/` (o navegador só libera o microfone em
-  `localhost` ou HTTPS). Não faça deploy na Vercel.
+- Neste modo funciona só no seu PC, por `http://localhost:3333/central/` (o navegador só libera o microfone em
+  `localhost` ou HTTPS). Não faça deploy na Vercel **deste modo**: o Asterisk fica no PC e a Vercel não o alcança. Para a Vercel, use o modo online (`MANUAL.md`). Se você roda este modo num PC que também tem `RELAY_URL` definida, acrescente `MODO=local`.
 - Não tem login, e o histórico (números de telefone) fica só na memória do servidor.
 
 **O que eu testei e o que não testei (honestamente):**
@@ -315,6 +319,11 @@ resto. Com o celular no mesmo Wi-Fi do PC:
 Esperado: em poucos segundos aparece a notificação "Phone paired" e a caixa **First setup** some. Ligue **Take
 over calls** (6.4): na aba **Health** do app, **Privileged helper** fica verde ("CONNECTED") em alguns segundos.
 
+**Acompanhe pela Central.** Depois do passo 3 o app passa a contar à Central em que passo está (por 45 minutos), e o
+painel de celular mostra uma lista ao vivo logo abaixo do QR: servidor configurado, pareado, acesso privilegiado
+(helper), acesso às chamadas, áudio e registro no Asterisk. O primeiro item que não está verde diz o que falta. Se
+travar, me mande a foto dessa lista e do "Registro do app" que ela abre.
+
 Se não parear: depois do passo 3 o app só fica ouvindo por 10 minutos, e os QRs mudam sempre que você fecha e
 abre o painel da Central (refaça o passo 3). Alguns aparelhos podem não anunciar o pareamento por QR; nesse caso
 use o código: na caixa **First setup**, toque em **QR not working? Pair with the 6-digit code**, entre em
@@ -399,6 +408,7 @@ Se falhar, consulte a tabela abaixo.
 | A chamada completa mas não se ouve nada (ou o outro lado não ouve) | Áudio do celular | No app: **Cellular audio** = *Direct telephony* e **Mute call audio on this phone** desligado |
 | Chamada recebida não toca no navegador | `Take over calls` desligado, ramal não registrado ou outra aba da Central aberta | Feche as outras abas (um registro por vez) e confira a linha "Ramal" |
 | Caiu tudo depois de reiniciar o celular | O app só reconecta com Wi-Fi e Depuração sem fio ligados | Ligue o Wi-Fi, confira a Depuração sem fio e abra o app uma vez |
+| Apareceu a notificação no celular mas nada acontece na Central | O celular só registra quando toda a cadeia (pareamento, helper, acesso às chamadas, áudio) está pronta | Abra o painel de celular da Central e leia a lista ao vivo: o primeiro item que não está verde é o problema (`MANUAL.md`, Parte 4) |
 | Em chip com Wi-Fi calling (ex.: Google Fi), a chamada cai poucos segundos depois de atender | A operadora trata a chamada como VoIP | Desligue o Wi-Fi calling desse chip |
 
 **Comandos úteis para investigar** (e para me mandar):

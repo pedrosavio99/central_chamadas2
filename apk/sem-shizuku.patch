@@ -1,5 +1,5 @@
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
-index 4b17c6e..88c1495 100644
+index 4b17c6e..3cf67bc 100644
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
 @@ -63,8 +63,6 @@ dependencies {
@@ -11,8 +11,16 @@ index 4b17c6e..88c1495 100644
  
      implementation(libs.androidx.core.ktx)
      implementation(libs.androidx.activity.compose)
+@@ -73,6 +71,7 @@ dependencies {
+     implementation(libs.androidx.compose.material3)
+     implementation(libs.kotlinx.coroutines.android)
+     implementation(libs.mlkit.code.scanner)
++    implementation(libs.okhttp)
+     testImplementation(libs.junit)
+     testImplementation(libs.mockito.core)
+     testImplementation(libs.android.json)
 diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
-index 11607c7..b69f3a2 100644
+index 11607c7..03db6b2 100644
 --- a/app/src/main/AndroidManifest.xml
 +++ b/app/src/main/AndroidManifest.xml
 @@ -1,9 +1,11 @@
@@ -28,7 +36,7 @@ index 11607c7..b69f3a2 100644
      <uses-permission android:name="android.permission.READ_PHONE_NUMBERS" />
      <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
      <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-@@ -11,6 +13,8 @@
+@@ -11,10 +13,13 @@
      <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
      <uses-permission android:name="android.permission.WAKE_LOCK" />
      <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
@@ -37,7 +45,12 @@ index 11607c7..b69f3a2 100644
  
      <application
          android:name=".GatewayApp"
-@@ -79,17 +83,10 @@
+         android:allowBackup="false"
++        android:usesCleartextTraffic="true"
+         android:icon="@drawable/ic_gateway"
+         android:label="@string/app_name"
+         android:supportsRtl="true"
+@@ -79,17 +84,10 @@
              android:exported="true"
              android:permission="android.permission.DUMP" />
  
@@ -59,6 +72,23 @@ index 11607c7..b69f3a2 100644
  
          <!-- Pede ao Google Play services o modulo do leitor de QR junto com a instalacao. -->
          <meta-data
+diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/AppLog.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/AppLog.kt
+index 79260f7..15266b1 100644
+--- a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/AppLog.kt
++++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/AppLog.kt
+@@ -16,6 +16,12 @@ object AppLog {
+     private val _tail = MutableStateFlow<List<String>>(emptyList())
+     val tail: StateFlow<List<String>> = _tail
+ 
++    /** The last [last] lines with [secret] (a password or token) masked, for copying or shipping elsewhere. */
++    fun snapshot(secret: String = "", last: Int = KEEP): List<String> {
++        val all = _tail.value.takeLast(last)
++        return if (secret.length < 4) all else all.map { it.replace(secret, "***") }
++    }
++
+     fun i(msg: String) = add(msg) { Log.i(TAG, it) }
+ 
+     fun w(msg: String, t: Throwable? = null) = add(if (t == null) msg else "$msg: $t") { Log.w(TAG, it, t) }
 diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/DialerRoleActivity.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/DialerRoleActivity.kt
 index 27fb843..867a6e2 100644
 --- a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/DialerRoleActivity.kt
@@ -110,6 +140,18 @@ index 27fb843..867a6e2 100644
      }
  
      protected fun cancelDialerChange() = afterUnlock { GatewayRuntime.get(this).cancelDialerChange() }
+diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayApp.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayApp.kt
+index 59c8330..190d8df 100644
+--- a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayApp.kt
++++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayApp.kt
+@@ -9,5 +9,7 @@ class GatewayApp : Application() {
+         // it the CellularEndpoint) must exist before any activity or service runs.
+         GatewayRuntime.get(this).start()
+         GatewayService.start(this)
++        // Keeps the Central's live setup checklist going if the process restarted in the middle of the setup.
++        StatusBeacon.resume(this)
+     }
+ }
 diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayDialerActivity.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayDialerActivity.kt
 index aa28360..949396c 100644
 --- a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayDialerActivity.kt
@@ -133,7 +175,7 @@ index aa28360..949396c 100644
                          }
                          OutlinedButton(onClick = ::chooseDialerInSettings, enabled = !health.dialerChangeRunning) { Text("Choose dialer in Settings") }
 diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayRuntime.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayRuntime.kt
-index e29e205..e426596 100644
+index e29e205..f29da07 100644
 --- a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayRuntime.kt
 +++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayRuntime.kt
 @@ -21,7 +21,7 @@ import io.github.sparkcyf.voicesipagent.privileged.AudioMethod
@@ -331,7 +373,17 @@ index e29e205..e426596 100644
              !access -> c.accessProblem!!
              !audio -> "Selected call audio unavailable: ${h.privilegedDetail}"
              !h.loopbackTest && !h.sip.ready -> "SIP unavailable: ${h.sip.detail}"
-@@ -604,7 +606,7 @@ class GatewayRuntime private constructor(context: Context) {
+@@ -535,7 +537,8 @@ class GatewayRuntime private constructor(context: Context) {
+      */
+     private fun sipHoldReason(problem: String?): String? {
+         val s = settings
+-        val d = sipGate.evaluate(active = gatewayEnabled && s.takeover && s.sipConfigured && s.holdSipWhenNotReady,
++        val d = sipGate.evaluate(active = gatewayEnabled && s.takeover && s.sipConfigured && s.holdSipWhenNotReady &&
++                s.sipStack != SipStack.ONLINE, // the relay has no PBX to fail over to: stay connected and report problems
+             ready = problem == null)
+         scheduleSipHoldCheck(d.recheckAtMs)
+         return if (d.hold) problem ?: "cellular side not ready" else null
+@@ -604,7 +607,7 @@ class GatewayRuntime private constructor(context: Context) {
          pendingDialerChange = null
          _health.update { it.copy(dialerChangePending = false, dialerChangeFailed = false, dialerChangeAcquire = false) }
          _dialerMessage.value = ""
@@ -340,7 +392,7 @@ index e29e205..e426596 100644
      }
  
      private fun prepareDialerChangeRequest(acquire: Boolean) {
-@@ -635,9 +637,9 @@ class GatewayRuntime private constructor(context: Context) {
+@@ -635,9 +638,9 @@ class GatewayRuntime private constructor(context: Context) {
          val change = pendingDialerChange ?: return
          dialerRetry?.cancel(false)
          dialerRetry = null
@@ -352,7 +404,64 @@ index e29e205..e426596 100644
              updateReadiness()
              return
          }
-@@ -1065,7 +1067,7 @@ class GatewayRuntime private constructor(context: Context) {
+@@ -721,6 +724,11 @@ class GatewayRuntime private constructor(context: Context) {
+             return
+         }
+         PjsipEndpoint.setVerboseLogging(s.sipDebugLog)
++        if (s.sipStack == SipStack.ONLINE && transport == SipTransport.UDP) {
++            AppLog.w("the online stack needs transport tls (wss) or tcp (ws)")
++            _health.update { it.copy(sip = EndpointStatus(false, "online needs transport tls or tcp")) }
++            return
++        }
+         if (transport == null || (s.sipStack == SipStack.BUILTIN && transport != SipTransport.UDP)) {
+             AppLog.w("SIP transport '${s.sipTransport}' not supported by the ${s.sipStack.id} stack")
+             _health.update { it.copy(sip = EndpointStatus(false, "transport ${s.sipTransport} unsupported by ${s.sipStack.id}")) }
+@@ -745,6 +753,20 @@ class GatewayRuntime private constructor(context: Context) {
+                 ).also { ua ->
+                     ua.addStatusListener { ep, st -> sipStatus(ep, st) }
+                 }
++                SipStack.ONLINE -> OnlineEndpoint(
++                    OnlineConfig(
++                        server = s.server,
++                        port = s.port,
++                        secure = transport == SipTransport.TLS,
++                        room = s.username.trim(),
++                        token = s.password,
++                        format = audioFormat(),
++                    ),
++                    { AppLog.i("online: $it") },
++                    { AppLog.snapshot(s.password) },
++                ).also { on ->
++                    on.addStatusListener { ep, st -> sipStatus(ep, st) }
++                }
+                 SipStack.PJSUA2 -> PjsipEndpoint(
+                     PjsipConfig(
+                         server = s.server,
+@@ -773,6 +795,7 @@ class GatewayRuntime private constructor(context: Context) {
+                     when (ep) {
+                         is SipUserAgent -> ep.start()
+                         is PjsipEndpoint -> ep.start()
++                        is OnlineEndpoint -> ep.start()
+                     }
+                 } catch (t: Throwable) {
+                     AppLog.w("SIP start failed", t)
+@@ -792,6 +815,7 @@ class GatewayRuntime private constructor(context: Context) {
+         try {
+             when (val s = previous) {
+                 is SipUserAgent -> trackSipSocketRelease(s.stop())
++                is OnlineEndpoint -> s.stop()
+                 is PjsipEndpoint -> {
+                     // Keep the SIP socket only if pjsua2 is about to take it over again.
+                     val n = settings
+@@ -815,6 +839,7 @@ class GatewayRuntime private constructor(context: Context) {
+         when (val s = sip) {
+             is SipUserAgent -> s.refreshRegistration()
+             is PjsipEndpoint -> s.refreshRegistration()
++            is OnlineEndpoint -> s.refreshRegistration()
+         }
+     }
+ 
+@@ -1065,7 +1090,7 @@ class GatewayRuntime private constructor(context: Context) {
          return "ready=${h.cellularReady} (${h.readinessDetail}) takeover=${onOff(h.takeover)}" +
              (if (h.takeoverOffPending || h.takeoverOnPending) " pending" else "") +
              " sip=${if (h.sip.ready) "ready" else "down"} (${h.sip.detail}) stack=${settings.sipStack.id}" +
@@ -361,7 +470,7 @@ index e29e205..e426596 100644
              " audioReady=${h.audioReady} tap=${if (audio.active) audio.backend else "idle"}" +
              " earpiece_mute=${onOff(settings.muteEarpiece)} loopback=${onOff(h.loopbackTest)}" +
              " sims=${h.sims.joinToString(",").ifEmpty { "none" }} default_sim=${defaultSimLabel(h)}" +
-@@ -1102,7 +1104,7 @@ class GatewayRuntime private constructor(context: Context) {
+@@ -1102,7 +1127,7 @@ class GatewayRuntime private constructor(context: Context) {
          return buildString {
              appendLine("takeover=${h.takeover} pendingOff=${h.takeoverOffPending} pendingOn=${h.takeoverOnPending} " +
                  "keepDefaultDialer=${settings.keepDefaultDialer} muteEarpiece=${settings.muteEarpiece}")
@@ -370,7 +479,7 @@ index e29e205..e426596 100644
              appendLine("privileged=${h.privileged} ${h.privilegedDetail}")
              appendLine("sip=${h.sip.detail} ready=${h.sip.ready} stack=${settings.sipStack.id} " +
                  "transport=${settings.sipTransport} srtp=${settings.srtp} debugLog=${settings.sipDebugLog}")
-@@ -1118,14 +1120,14 @@ class GatewayRuntime private constructor(context: Context) {
+@@ -1118,14 +1143,14 @@ class GatewayRuntime private constructor(context: Context) {
              appendLine("calls=${h.calls.summary} settingsPending=${h.settingsPending}")
              appendLine("loopback=${h.loopbackTest} session=${h.session}")
              appendLine("callAudio=${callAudioStatus.value}")
@@ -417,10 +526,18 @@ index af88f2b..9f8a272 100644
              else -> "Ready · ${h.sip.detail}"
          }
 diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/MainActivity.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/MainActivity.kt
-index c6ff2e3..400cf4e 100644
+index c6ff2e3..a588b2c 100644
 --- a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/MainActivity.kt
 +++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/MainActivity.kt
-@@ -65,13 +65,19 @@ import io.github.sparkcyf.voicesipagent.privileged.HealthKeys
+@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
+ import androidx.compose.foundation.layout.width
+ import androidx.compose.foundation.rememberScrollState
+ import androidx.compose.foundation.text.KeyboardOptions
++import androidx.compose.foundation.text.selection.SelectionContainer
+ import androidx.compose.foundation.verticalScroll
+ import androidx.compose.material3.AlertDialog
+ import androidx.compose.material3.Button
+@@ -65,13 +66,19 @@ import io.github.sparkcyf.voicesipagent.privileged.HealthKeys
  import io.github.sparkcyf.voicesipagent.privileged.AudioMethod
  import io.github.sparkcyf.voicesipagent.privileged.CallAccess
  import io.github.sparkcyf.voicesipagent.privileged.CallAudioStatus
@@ -441,7 +558,7 @@ index c6ff2e3..400cf4e 100644
      override fun onCreate(savedInstanceState: Bundle?) {
          super.onCreate(savedInstanceState)
          val runtime = GatewayRuntime.get(this)
-@@ -102,6 +108,17 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
+@@ -102,6 +109,17 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
      ) {
          Text("Voice SIP Agent", style = MaterialTheme.typography.headlineSmall)
          val cur by rt.settingsFlow.collectAsState()
@@ -459,7 +576,7 @@ index c6ff2e3..400cf4e 100644
          Section("Takeover") {
              Toggle("Take over calls", cur.takeover, setTakeover) {
                  when {
-@@ -137,7 +154,7 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
+@@ -137,7 +155,7 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
              }
              if (roleMessage.isNotEmpty()) Text(roleMessage)
              if (h.holdsDialer || h.dialerChangeFailed) {
@@ -468,7 +585,7 @@ index c6ff2e3..400cf4e 100644
                      OutlinedButton(onClick = switchDialer, enabled = !h.dialerChangeRunning) { Text("Restore previous dialer") }
                  }
                  OutlinedButton(onClick = chooseDialer, enabled = !h.dialerChangeRunning) { Text("Choose dialer in Settings") }
-@@ -167,8 +184,8 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
+@@ -167,8 +185,8 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
                  h.takeoverOnPending -> "Health checks will start after current calls end."
                  else -> "Health checks are paused while takeover is off."
              }, style = MaterialTheme.typography.bodySmall)
@@ -479,7 +596,7 @@ index c6ff2e3..400cf4e 100644
              Check("Call audio access", h.audioReady)
              Check("Doze allowlisted", p?.get(HealthKeys.DOZE_ALLOWLISTED) == true)
              Check("SIP registration", h.sip.ready,
-@@ -180,11 +197,11 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
+@@ -180,11 +198,11 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
                  horizontalArrangement = Arrangement.spacedBy(8.dp),
                  verticalArrangement = Arrangement.spacedBy(8.dp),
              ) {
@@ -494,7 +611,7 @@ index c6ff2e3..400cf4e 100644
                  OutlinedButton(onClick = { rt.restartSip() },
                      enabled = actionsEnabled && cur.sipConfigured) { Text("Reconnect SIP") }
              }
-@@ -214,7 +231,7 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
+@@ -214,7 +232,7 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
              if (callAudio.restorationPending) {
                  Text("Local call playback restoration is unconfirmed. Sound may remain muted.",
                      color = MaterialTheme.colorScheme.error)
@@ -503,7 +620,7 @@ index c6ff2e3..400cf4e 100644
                      OutlinedButton(onClick = { rt.retryAudioRestoration() },
                          enabled = !callAudio.active && h.calls.count == 0 && h.session == null) {
                          Text("Retry restoring playback")
-@@ -233,7 +250,7 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
+@@ -233,7 +251,7 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
              }
          }
          SettingsSection(rt, editor)
@@ -512,7 +629,117 @@ index c6ff2e3..400cf4e 100644
          var advanced by rememberSaveable { mutableStateOf(false) }
          OutlinedButton(onClick = { advanced = !advanced }) { Text(if (advanced) "Hide advanced settings" else "Advanced settings") }
          if (advanced) {
-@@ -427,10 +444,31 @@ private fun ConfigFileSection(rt: GatewayRuntime) {
+@@ -299,12 +317,35 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
+             }
+         }
+         Section("Log") {
+-            Text(log.takeLast(60).reversed().joinToString("\n"), fontFamily = FontFamily.Monospace,
+-                fontSize = 11.sp, lineHeight = 14.sp)
++            val ctx = LocalContext.current
++            var copied by remember { mutableStateOf("") }
++            Text("Newest line first. The Central shows the same lines live when this phone is online.",
++                style = MaterialTheme.typography.bodySmall)
++            OutlinedButton(onClick = {
++                val text = buildString {
++                    appendLine("Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
++                    appendLine(cur.toString())
++                    appendLine("sip: ${h.sip.detail}")
++                    appendLine("ready: ${h.privilegedReady && h.sip.ready} ${h.readinessDetail}")
++                    appendLine()
++                    append(AppLog.snapshot(cur.password, 200).joinToString("\n"))
++                }
++                val cm = ctx.getSystemService(android.content.ClipboardManager::class.java)
++                cm?.setPrimaryClip(android.content.ClipData.newPlainText("voice-sip-agent log", text))
++                copied = "Copied ${text.lines().size} lines. Paste them in the chat."
++            }) { Text("Copy log") }
++            if (copied.isNotEmpty()) Text(copied, style = MaterialTheme.typography.bodySmall)
++            SelectionContainer {
++                Text(log.takeLast(60).reversed().joinToString("\n"), fontFamily = FontFamily.Monospace,
++                    fontSize = 11.sp, lineHeight = 14.sp)
++            }
+         }
+     }
+ }
+ 
++/** The online stack is a WebSocket to the relay: wss on 443 (tls) or ws on 80 (tcp). */
++private fun onlineDefaultPort(transport: SipTransport) = if (transport == SipTransport.TLS) "443" else "80"
++
+ @Composable
+ private fun SettingsSection(rt: GatewayRuntime, editor: SipSettingsDraft) = with(editor) {
+     val cur by rt.settingsFlow.collectAsState()
+@@ -312,35 +353,60 @@ private fun SettingsSection(rt: GatewayRuntime, editor: SipSettingsDraft) = with
+     val health by rt.health.collectAsState()
+     LaunchedEffect(cur, pending) { syncSaved(cur, pending) }
+     val builtin = stack == SipStack.BUILTIN
++    val online = stack == SipStack.ONLINE
+     val unsaved = hasUnsavedChanges(cur, pending)
+     val sipPending = pending?.hasSameSipSettings(cur) == false
+     val portValidationError = portError
+     Section("Settings") {
+-        Choice("SIP stack", SipStack.entries, stack, { if (it == SipStack.BUILTIN) "${it.id} (deprecated)" else it.id }) {
++        Choice("SIP stack", SipStack.entries, stack, {
++            when (it) {
++                SipStack.BUILTIN -> "${it.id} (deprecated)"
++                SipStack.ONLINE -> "online (relay)"
++                else -> it.id
++            }
++        }) {
++            val before = stack
++            val beforeDefault = if (before == SipStack.ONLINE) onlineDefaultPort(transport) else transport.defaultPort.toString()
+             stack = it
+             // The built-in stack is UDP only.
+             if (it == SipStack.BUILTIN) {
+-                if (port == transport.defaultPort.toString()) port = SipTransport.UDP.defaultPort.toString()
++                if (port == beforeDefault) port = SipTransport.UDP.defaultPort.toString()
+                 transport = SipTransport.UDP
+             }
++            // The online stack is a WebSocket: tls = wss on 443, tcp = ws on 80.
++            if (it == SipStack.ONLINE) {
++                if (transport == SipTransport.UDP) transport = SipTransport.TLS
++                if (port == beforeDefault) port = onlineDefaultPort(transport)
++            } else if (before == SipStack.ONLINE && port == beforeDefault) {
++                port = transport.defaultPort.toString()
++            }
++        }
++        if (online) {
++            Text("Online mode: this phone keeps one connection open to the Central's relay on the internet, " +
++                "so nothing else is needed (no PBX, no open ports). In the Central, open Connect phone and " +
++                "scan its QR code with Scan QR code below: it fills in these fields.",
++                style = MaterialTheme.typography.bodySmall)
+         }
+-        Choice("Transport", SipTransport.entries, transport, { it.id }, enabled = { !builtin || it == SipTransport.UDP }) {
++        Choice(if (online) "Transport (tls = wss, tcp = ws)" else "Transport", SipTransport.entries, transport, { it.id },
++            enabled = { (!builtin || it == SipTransport.UDP) && (!online || it != SipTransport.UDP) }) {
+             // Follow the default port when it was still the previous transport's default.
+-            if (port == transport.defaultPort.toString()) port = it.defaultPort.toString()
++            val old = if (online) onlineDefaultPort(transport) else transport.defaultPort.toString()
++            if (port == old) port = if (online) onlineDefaultPort(it) else it.defaultPort.toString()
+             transport = it
+         }
+-        Choice("SRTP (TLS only)", SrtpPolicy.entries, srtp, { it.id }, enabled = { !builtin && transport == SipTransport.TLS }) {
++        Choice("SRTP (TLS only)", SrtpPolicy.entries, srtp, { it.id },
++            enabled = { !builtin && !online && transport == SipTransport.TLS }) {
+             srtp = it
+         }
+-        Field("PBX host", server) { server = it }
+-        Field("PBX port", port, KeyboardType.Number, error = portValidationError) { port = it }
+-        Field("SIP domain (empty = PBX host)", domain) { domain = it }
+-        Field("Extension / user", user) { user = it }
++        Field(if (online) "Relay host (for example central-relay.onrender.com)" else "PBX host", server) { server = it }
++        Field(if (online) "Relay port" else "PBX port", port, KeyboardType.Number, error = portValidationError) { port = it }
++        if (!online) Field("SIP domain (empty = PBX host)", domain) { domain = it }
++        Field(if (online) "Line (room name)" else "Extension / user", user) { user = it }
+         OutlinedTextField(
+-            value = password, onValueChange = { password = it }, label = { Text("Password") },
++            value = password, onValueChange = { password = it }, label = { Text(if (online) "Phone token" else "Password") },
+             visualTransformation = PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth(),
+         )
+-        Field("Cellular inbound -> SIP target (blank = username)", target) { target = it }
++        if (!online) Field("Cellular inbound -> SIP target (blank = username)", target) { target = it }
+         Field("Allowed dial-out prefixes (comma separated, empty = any)", prefixes) { prefixes = it }
+         if (unsaved) Text("Unsaved changes", style = MaterialTheme.typography.bodySmall,
+             color = MaterialTheme.colorScheme.primary)
+@@ -427,10 +493,35 @@ private fun ConfigFileSection(rt: GatewayRuntime) {
              OutlinedButton(onClick = {
                  scanner.startScan()
                      .addOnSuccessListener { code ->
@@ -525,8 +752,12 @@ index c6ff2e3..400cf4e 100644
 +                            }
 +                            true
 +                        } ?: false
++                        // The same QR says where the Central is: from now on the panel shows each setup step live.
++                        val reportTo = scanned.reportUrl
++                        val sessionId = scanned.offer?.name
++                        if (reportTo != null && sessionId != null) StatusBeacon.arm(context, reportTo, sessionId, scanned.online)
 +                        val armedNote = "Now open Settings, Developer options, Wireless debugging, Pair device with QR code, " +
-+                            "and scan the second QR on the Central. The app pairs by itself."
++                            "and scan the second QR on the Central. The app pairs by itself and the Central shows each step live."
 +                        val config = scanned.config
 +                        if (config == null) {
 +                            message = if (armed) armedNote else "QR code not accepted"
@@ -546,6 +777,502 @@ index c6ff2e3..400cf4e 100644
                          }, { message = "QR code not accepted: ${it.message ?: it.javaClass.simpleName}" })
                      }
                      .addOnFailureListener { message = "Scan failed: ${it.message ?: it.javaClass.simpleName}" }
+diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/OnlineEndpoint.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/OnlineEndpoint.kt
+new file mode 100644
+index 0000000..72eec41
+--- /dev/null
++++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/OnlineEndpoint.kt
+@@ -0,0 +1,490 @@
++package io.github.sparkcyf.voicesipagent.app
++
++import io.github.sparkcyf.voicesipagent.voice.AbstractCallLeg
++import io.github.sparkcyf.voicesipagent.voice.CallEndpoint
++import io.github.sparkcyf.voicesipagent.voice.CallLeg
++import io.github.sparkcyf.voicesipagent.voice.EndpointStatus
++import io.github.sparkcyf.voicesipagent.voice.EndpointStatusListener
++import io.github.sparkcyf.voicesipagent.voice.FrameClockListener
++import io.github.sparkcyf.voicesipagent.voice.HangupCause
++import io.github.sparkcyf.voicesipagent.voice.IncomingCallHandler
++import io.github.sparkcyf.voicesipagent.voice.LegDirection
++import io.github.sparkcyf.voicesipagent.voice.LegState
++import io.github.sparkcyf.voicesipagent.voice.MediaPort
++import io.github.sparkcyf.voicesipagent.voice.Party
++import io.github.sparkcyf.voicesipagent.voice.PcmFormat
++import okhttp3.OkHttpClient
++import okhttp3.Request
++import okhttp3.Response
++import okhttp3.WebSocket
++import okhttp3.WebSocketListener
++import okio.ByteString
++import org.json.JSONArray
++import org.json.JSONObject
++import java.util.ArrayDeque
++import java.util.concurrent.CopyOnWriteArrayList
++import java.util.concurrent.Executors
++import java.util.concurrent.ScheduledFuture
++import java.util.concurrent.TimeUnit
++import java.util.concurrent.atomic.AtomicInteger
++
++/**
++ * Where the Central's relay lives and which line (room) this phone answers for. The settings screen reuses the
++ * SIP fields for this: server = relay host, port = relay port, user = room, password = phone token.
++ */
++data class OnlineConfig(
++    val server: String,
++    val port: Int,
++    val secure: Boolean,
++    val room: String,
++    val token: String,
++    val format: PcmFormat = PcmFormat.NARROWBAND,
++    val appName: String = "voice-sip-agent",
++) {
++    /** The host as typed, forgiving about a pasted address ("https://name.onrender.com/"). */
++    val host: String
++        get() = server.trim()
++            .removePrefix("wss://").removePrefix("ws://").removePrefix("https://").removePrefix("http://")
++            .substringBefore('/').trim()
++
++    val url: String
++        get() {
++            val defaultPort = if (secure) 443 else 80
++            val hostPort = if (port == defaultPort || port <= 0 || host.contains(':')) host else "$host:$port"
++            return (if (secure) "wss://" else "ws://") + hostPort + "/ws"
++        }
++}
++
++/**
++ * The "online" voice endpoint: instead of registering at a SIP server it keeps one WebSocket open to the relay
++ * (a small Node server on a free host) and passes the call audio through it as raw PCM16 frames, 20 ms each.
++ * The browser in the Central is on the other side of the relay. Nothing here needs UDP or an open port, so it
++ * works from any network and any free hosting that speaks HTTP.
++ *
++ * Protocol (JSON text frames plus binary audio frames), see relay/src/servidor.js:
++ *  - phone -> relay: hello, ping, log, incoming, ringing, connected, ended
++ *  - relay -> phone: welcome, dial, answer, hangup, dtmf, pong, presenca, erro
++ *
++ * A browser "dial" arrives as an INBOUND leg (the bridge then calls the cellular side); a cellular call
++ * arrives at the bridge, which calls [dial] here to show it in the browser (an OUTBOUND leg).
++ * One call at a time, like the cellular line.
++ */
++class OnlineEndpoint(
++    private val config: OnlineConfig,
++    private val log: (String) -> Unit = {},
++    /** Lines of the app log to copy into the relay's log (the Central shows and copies them). */
++    private val logSource: () -> List<String> = { emptyList() },
++) : CallEndpoint {
++    override val name = "online"
++
++    @Volatile override var status = EndpointStatus(false, "not started")
++        private set
++
++    private val lock = Any()
++    private val listeners = CopyOnWriteArrayList<EndpointStatusListener>()
++    @Volatile private var handler: IncomingCallHandler? = null
++    private val scheduler = Executors.newSingleThreadScheduledExecutor { r ->
++        Thread(r, "online-endpoint").apply { isDaemon = true }
++    }
++    private val ids = AtomicInteger(1)
++
++    private var socket: WebSocket? = null
++    private var generation = 0
++    private var started = false
++    private var attempt = 0
++    private var reconnectTask: ScheduledFuture<*>? = null
++    private var keepAliveTask: ScheduledFuture<*>? = null
++    private var tick = 0
++    private var leg: OnlineLeg? = null
++    private var lastShipped: String? = null
++    private var refusal: String? = null
++
++    override fun setIncomingCallHandler(handler: IncomingCallHandler?) {
++        this.handler = handler
++    }
++
++    override fun addStatusListener(listener: EndpointStatusListener) {
++        listeners.addIfAbsent(listener)
++    }
++
++    override fun removeStatusListener(listener: EndpointStatusListener) {
++        listeners.remove(listener)
++    }
++
++    private fun setStatus(ready: Boolean, detail: String) {
++        val next = EndpointStatus(ready, detail)
++        if (next == status) return
++        status = next
++        listeners.forEach { it.onStatusChanged(this, next) }
++    }
++
++    /** Opens the connection and keeps it open (reconnecting with a growing delay) until [stop]. */
++    fun start() {
++        synchronized(lock) {
++            if (started) return
++            started = true
++            attempt = 0
++            connectLocked()
++        }
++    }
++
++    /** Closes the connection and ends any call. The endpoint cannot be started again; make a new one. */
++    fun stop() {
++        val ending: OnlineLeg?
++        val ws: WebSocket?
++        synchronized(lock) {
++            started = false
++            generation++
++            reconnectTask?.cancel(false)
++            keepAliveTask?.cancel(false)
++            ws = socket
++            socket = null
++            ending = leg
++        }
++        ending?.finish(HangupCause.NETWORK_ERROR, "celular")
++        try { ws?.close(1000, "stop") } catch (_: Exception) {}
++        setStatus(false, "stopped")
++        scheduler.shutdown()
++    }
++
++    /** The phone's network changed: drop the old socket and connect again right away. */
++    fun refreshRegistration() {
++        val ending: OnlineLeg?
++        val old: WebSocket?
++        synchronized(lock) {
++            if (!started) return
++            generation++ // events of the old socket are ignored from now on
++            reconnectTask?.cancel(false)
++            keepAliveTask?.cancel(false)
++            old = socket
++            socket = null
++            ending = leg
++        }
++        // Ends the call before the new socket exists, so its "ended" message is not queued ahead of "hello".
++        ending?.finish(HangupCause.NETWORK_ERROR, "celular")
++        try { old?.close(1000, "network changed") } catch (_: Exception) {}
++        synchronized(lock) {
++            if (!started) return
++            attempt = 0
++            connectLocked()
++        }
++    }
++
++    // ------------------------------------------------------------ connection
++
++    private fun connectLocked() {
++        val gen = ++generation
++        refusal = null
++        setStatus(false, "connecting to the relay")
++        log("connecting to ${config.url}")
++        try {
++            val request = Request.Builder().url(config.url).build()
++            socket = client.newWebSocket(request, Link(gen))
++        } catch (e: Exception) {
++            log("cannot open the relay address: ${e.message}")
++            setStatus(false, "bad relay address: ${e.message}")
++            started = false
++        }
++    }
++
++    private fun isCurrent(gen: Int) = synchronized(lock) { gen == generation }
++
++    private inner class Link(private val gen: Int) : WebSocketListener() {
++        override fun onOpen(webSocket: WebSocket, response: Response) {
++            if (!isCurrent(gen)) return
++            log("relay socket open, signing in to room ${config.room}")
++            webSocket.send(
++                JSONObject().put("t", "hello").put("papel", "celular").put("sala", config.room)
++                    .put("token", config.token).put("rate", config.format.sampleRate)
++                    .put("app", config.appName).toString(),
++            )
++        }
++
++        override fun onMessage(webSocket: WebSocket, text: String) {
++            if (isCurrent(gen)) handleText(text)
++        }
++
++        override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
++            if (!isCurrent(gen)) return
++            val l = synchronized(lock) { leg } ?: return
++            l.port.receive(bytes.toByteArray())
++        }
++
++        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
++            try { webSocket.close(1000, null) } catch (_: Exception) {}
++        }
++
++        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
++            lost(gen, "closed by the relay ($code ${reason.take(40)})", code)
++        }
++
++        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
++            lost(gen, "connection failed: ${t.message}", -1)
++        }
++    }
++
++    private fun lost(gen: Int, why: String, code: Int) {
++        val ending: OnlineLeg?
++        synchronized(lock) {
++            if (gen != generation) return
++            socket = null
++            keepAliveTask?.cancel(false)
++            ending = leg
++            val definitive = code == 4001 || code == 4002 || code == 4003
++            if (definitive) {
++                started = false
++                val detail = when (code) {
++                    4001 -> "the relay refused the token: scan the QR code in the Central again"
++                    4002 -> "another phone took over this line"
++                    else -> refusal ?: "the relay refused the connection"
++                }
++                log("relay: $detail")
++                setStatus(false, detail)
++            } else if (started) {
++                val delaySeconds = BACKOFF_S[minOf(attempt, BACKOFF_S.size - 1)].let { if (code == 4004 || code == 4005) 60L else it }
++                attempt++
++                log("relay link lost ($why); retrying in $delaySeconds s")
++                setStatus(false, "relay unreachable, retrying in $delaySeconds s")
++                reconnectTask = scheduler.schedule({
++                    synchronized(lock) { if (started && gen == generation) connectLocked() }
++                }, delaySeconds, TimeUnit.SECONDS)
++            }
++        }
++        ending?.finish(HangupCause.NETWORK_ERROR, "celular")
++    }
++
++    private fun handleText(text: String) {
++        val m = try { JSONObject(text) } catch (_: Exception) { return }
++        when (m.optString("t")) {
++            "welcome" -> {
++                synchronized(lock) {
++                    attempt = 0
++                    lastShipped = null
++                    tick = 0
++                    keepAliveTask?.cancel(false)
++                    keepAliveTask = scheduler.scheduleWithFixedDelay({ keepAlive() }, 2, 3, TimeUnit.SECONDS)
++                }
++                log("online: connected to the relay (version ${m.optString("versao")})")
++                setStatus(true, "online (relay ${m.optString("versao")})")
++            }
++            "erro" -> {
++                refusal = m.optString("msg").take(120)
++                log("relay says: ${m.optString("codigo")} ${refusal}")
++            }
++            "dial" -> onBrowserDial(m.optString("numero"))
++            "answer" -> synchronized(lock) { leg }?.onBrowserAnswer()
++            "hangup" -> synchronized(lock) { leg }?.onBrowserHangup()
++            "dtmf" -> synchronized(lock) { leg }?.onBrowserDtmf(m.optString("tecla"))
++            else -> {}
++        }
++    }
++
++    /** Every 3 s: copy new app log lines to the relay; every ~21 s: a ping so free hosts see traffic. */
++    private fun keepAlive() {
++        try {
++            tick++
++            shipLog()
++            if (tick % 7 == 0) {
++                send(JSONObject().put("t", "ping").put("n", tick).put("em", System.currentTimeMillis()).toString())
++            }
++        } catch (e: Exception) {
++            log("keepalive error: ${e.message}")
++        }
++    }
++
++    private fun shipLog() {
++        val lines = logSource()
++        if (lines.isEmpty()) return
++        val last = lastShipped
++        val index = if (last == null) -1 else lines.lastIndexOf(last)
++        val fresh = if (index >= 0) lines.subList(index + 1, lines.size) else lines.takeLast(30)
++        if (fresh.isEmpty()) return
++        lastShipped = lines.last()
++        send(JSONObject().put("t", "log").put("linhas", JSONArray(fresh.takeLast(40))).toString())
++    }
++
++    private fun send(text: String): Boolean {
++        val ws = synchronized(lock) { socket } ?: return false
++        return try { ws.send(text) } catch (_: Exception) { false }
++    }
++
++    private fun sendAudio(bytes: ByteArray) {
++        val ws = synchronized(lock) { socket } ?: return
++        if (ws.queueSize() > MAX_QUEUE_BYTES) return // the link is slower than real time: drop, never delay
++        try { ws.send(ByteString.of(*bytes)) } catch (_: Exception) {}
++    }
++
++    private fun newId() = "o${ids.getAndIncrement()}"
++
++    // ------------------------------------------------------------ legs
++
++    private fun onBrowserDial(number: String) {
++        val h = handler
++        if (h == null || number.isEmpty()) {
++            send(ended("indisponivel", "celular"))
++            return
++        }
++        val l = OnlineLeg(newId(), LegDirection.INBOUND, Party(null, "browser"), number)
++        val busy = synchronized(lock) {
++            if (leg != null) true else { leg = l; false }
++        }
++        if (busy) {
++            send(ended("ocupado", "celular"))
++            return
++        }
++        l.markOffered()
++        log("call requested from the browser")
++        h.onIncomingCall(l)
++    }
++
++    /** The cellular side received a call: show it in the browser. */
++    override fun dial(target: String, caller: Party, line: Int?): CallLeg {
++        val l = OnlineLeg(newId(), LegDirection.OUTBOUND, Party(target), target)
++        val problem: HangupCause?
++        synchronized(lock) {
++            problem = when {
++                !status.ready || socket == null -> HangupCause.UNAVAILABLE
++                leg != null -> HangupCause.BUSY
++                else -> null
++            }
++            if (problem == null) leg = l
++        }
++        if (problem != null) {
++            l.hangup(problem)
++            return l
++        }
++        val number = caller.number.orEmpty().filter { it.isDigit() || it == '+' || it == '*' || it == '#' }.take(32).ifEmpty { "0" }
++        l.markRinging()
++        log("incoming cellular call, ringing in the browser")
++        send(JSONObject().put("t", "incoming").put("numero", number).toString())
++        return l
++    }
++
++    private fun ended(cause: String, by: String) = JSONObject().put("t", "ended").put("causa", cause).put("por", by).toString()
++
++    private fun release(l: OnlineLeg) {
++        synchronized(lock) { if (leg === l) leg = null }
++    }
++
++    private inner class OnlineLeg(id: String, direction: LegDirection, remote: Party, target: String) :
++        AbstractCallLeg(id, "online", direction, remote, target) {
++        val port = OnlinePort(config.format) { sendAudio(it) }
++
++        fun markOffered() { transition(LegState.PROCEEDING) }
++        fun markRinging() { transition(LegState.RINGING) }
++
++        /** The browser accepted a call that came from the cellular side. */
++        fun onBrowserAnswer() {
++            if (direction == LegDirection.OUTBOUND && transition(LegState.CONNECTED)) {
++                log("browser answered")
++                publishMedia(port)
++                send("""{"t":"connected"}""") // the relay opens the audio path when the phone confirms
++            }
++        }
++
++        /** The browser hung up, declined, or cancelled. */
++        fun onBrowserHangup() {
++            val cause = when {
++                state == LegState.CONNECTED -> HangupCause.NORMAL
++                direction == LegDirection.OUTBOUND -> HangupCause.REJECTED
++                else -> HangupCause.CANCELLED
++            }
++            finish(cause, "operador")
++        }
++
++        fun onBrowserDtmf(digit: String) {
++            val d = digit.firstOrNull() ?: return
++            if (direction == LegDirection.INBOUND && state == LegState.CONNECTED && (d.isDigit() || d == '*' || d == '#')) {
++                publishDtmf(d, CallLeg.DEFAULT_DTMF_MS)
++            }
++        }
++
++        fun finish(cause: HangupCause, by: String) {
++            if (!transition(LegState.ENDED, cause)) return
++            release(this)
++            log("call ended: ${cause.name.lowercase()} (by $by)")
++            send(ended(causeCode(cause), by))
++        }
++
++        override fun ring() {
++            if (direction == LegDirection.INBOUND && transition(LegState.RINGING)) send("""{"t":"ringing"}""")
++        }
++
++        override fun answer() {
++            if (direction == LegDirection.INBOUND && transition(LegState.CONNECTED)) {
++                publishMedia(port)
++                send("""{"t":"connected"}""")
++            }
++        }
++
++        override fun hangup(cause: HangupCause) = finish(cause, "remoto")
++
++        override fun sendDtmf(digit: Char, durationMs: Int) {
++            // Tones towards the browser are not needed: the operator hears them in the audio itself.
++        }
++    }
++
++    /** Raw PCM16LE frames over the WebSocket, smoothed by a tiny jitter buffer (3 frames before it starts). */
++    private class OnlinePort(override val format: PcmFormat, private val sender: (ByteArray) -> Unit) : MediaPort {
++        override val isClockSource = false
++        override fun setClockListener(listener: FrameClockListener?) {}
++
++        private val queue = ArrayDeque<ShortArray>()
++        private var primed = false
++
++        fun receive(bytes: ByteArray) {
++            val size = format.frameBytes
++            if (bytes.isEmpty() || bytes.size % size != 0) return
++            synchronized(queue) {
++                var offset = 0
++                while (offset < bytes.size) {
++                    queue.add(format.decodeLe(bytes, offset))
++                    offset += size
++                }
++                while (queue.size > MAX_FRAMES) queue.poll() // keep the delay bounded when the sender runs fast
++            }
++        }
++
++        override fun readFrame(): ShortArray = synchronized(queue) {
++            if (!primed) {
++                if (queue.size < PRIME_FRAMES) return format.silence()
++                primed = true
++            }
++            queue.poll() ?: format.silence().also { primed = false }
++        }
++
++        override fun writeFrame(frame: ShortArray) {
++            sender(format.encodeLe(frame))
++        }
++    }
++
++    companion object {
++        private val BACKOFF_S = longArrayOf(1, 2, 4, 8, 15, 30)
++        private const val MAX_QUEUE_BYTES = 64 * 1024L
++        private const val PRIME_FRAMES = 3
++        private const val MAX_FRAMES = 15
++
++        // One client for every endpoint: OkHttp keeps its threads and connections in it.
++        private val client: OkHttpClient by lazy {
++            OkHttpClient.Builder()
++                .connectTimeout(15, TimeUnit.SECONDS)
++                .readTimeout(0, TimeUnit.MILLISECONDS)
++                .pingInterval(25, TimeUnit.SECONDS)
++                .build()
++        }
++
++        /** The code the Central understands for why a call ended (see the CAUSAS table in central.js). */
++        fun causeCode(cause: HangupCause): String = when (cause) {
++            HangupCause.NORMAL -> "normal"
++            HangupCause.BUSY -> "ocupado"
++            HangupCause.NO_ANSWER -> "sem_resposta"
++            HangupCause.REJECTED -> "recusada"
++            HangupCause.UNAVAILABLE -> "indisponivel"
++            HangupCause.NOT_FOUND -> "numero_invalido"
++            HangupCause.FORBIDDEN -> "proibido"
++            HangupCause.CANCELLED -> "cancelada"
++            HangupCause.NETWORK_ERROR -> "erro_rede"
++            HangupCause.INTERNAL_ERROR -> "falha"
++        }
++    }
++}
 diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/PairingGuide.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/PairingGuide.kt
 new file mode 100644
 index 0000000..0e1b5d2
@@ -835,27 +1562,31 @@ index d17981e..32a4b04 100644
          val suppressLocal = muteEarpiece()
 diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/QrPairing.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/QrPairing.kt
 new file mode 100644
-index 0000000..e51da42
+index 0000000..888404c
 --- /dev/null
 +++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/QrPairing.kt
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,52 @@
 +package io.github.sparkcyf.voicesipagent.app
 +
 +import org.json.JSONObject
 +
 +/**
 + * What a scanned QR can carry for Wireless-debugging pairing, so nobody has to type the 6-digit code:
-+ *  - the Central's configuration QR, which has an extra "adbPairing": {"name", "password"} object that
-+ *    [ConfigFile] does not know (it is split off before the file is parsed);
++ *  - the Central's configuration QR, which has two extra objects that [ConfigFile] does not know (both are
++ *    split off before the file is parsed): "adbPairing": {"name", "password"} and "central": {"url"}, the
++ *    address where the app reports its setup progress;
 + *  - the Android pairing QR itself, "WIFI:T:ADB;S:name;P:password;;".
 + */
 +internal object QrPairing {
 +    class Offer(val name: String, val password: String)
 +
-+    /** [config] is the settings JSON without the pairing object (null for a bare pairing QR). */
-+    class Scanned(val config: String?, val offer: Offer?)
++    /** [config] is the settings JSON without the extra objects (null for a bare pairing QR). */
++    class Scanned(val config: String?, val offer: Offer?, val reportUrl: String? = null, val online: Boolean = false)
 +
 +    private const val KEY = "adbPairing"
++    private const val KEY_CENTRAL = "central"
++    /** http(s) address of the Central, path optional, no spaces; the app adds /api/celular/relato. */
++    private val REPORT_URL = Regex("^https?://[A-Za-z0-9._:\\[\\]-]{1,100}(/[A-Za-z0-9._~/-]{0,100})?$")
 +    private val NAME = Regex("^[A-Za-z0-9._-]{4,63}$")
 +    private val PASSWORD = Regex("^[A-Za-z0-9._-]{6,64}$")
 +
@@ -863,9 +1594,15 @@ index 0000000..e51da42
 +        val text = raw.trim()
 +        parseWifi(text)?.let { return Scanned(null, it) }
 +        val obj = try { JSONObject(text) } catch (e: Exception) { return Scanned(text, null) }
-+        val pairing = obj.optJSONObject(KEY) ?: return Scanned(text, null)
++        val pairing = obj.optJSONObject(KEY)
++        val central = obj.optJSONObject(KEY_CENTRAL)
++        if (pairing == null && central == null) return Scanned(text, null)
 +        obj.remove(KEY)
-+        return Scanned(obj.toString(), offer(pairing.optString("name"), pairing.optString("password")))
++        obj.remove(KEY_CENTRAL)
++        val reportUrl = central?.optString("url")?.trim()?.trimEnd('/')?.takeIf { REPORT_URL.matches(it) }
++        // The online Central says so in its configuration: the progress reports then go to the relay.
++        val online = obj.optJSONObject("sip")?.optString("stack") == "online"
++        return Scanned(obj.toString(), pairing?.let { offer(it.optString("name"), it.optString("password")) }, reportUrl, online)
 +    }
 +
 +    private fun offer(name: String, password: String): Offer? =
@@ -881,6 +1618,20 @@ index 0000000..e51da42
 +        return offer(fields["S"].orEmpty(), fields["P"].orEmpty())
 +    }
 +}
+diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/SettingsStore.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/SettingsStore.kt
+index 7e16d58..4d51282 100644
+--- a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/SettingsStore.kt
++++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/SettingsStore.kt
+@@ -62,6 +62,9 @@ enum class SipStack(val id: String) {
+ 
+     /** pjsip's pjsua2 via :sip-pjsua2. */
+     PJSUA2("pjsua2"),
++
++    /** No SIP at all: one WebSocket to the Central's relay, audio as raw PCM frames (see OnlineEndpoint). */
++    ONLINE("online"),
+     ;
+ 
+     companion object {
 diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/SipRegistrationGate.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/SipRegistrationGate.kt
 index 6ff4ea3..7643fd7 100644
 --- a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/SipRegistrationGate.kt
@@ -894,6 +1645,172 @@ index 6ff4ea3..7643fd7 100644
   * registration. Readiness lifts the hold at once. The caller defers applying a decision while
   * calls or a bridge session exist. Not thread-safe; the runtime uses it on its executor.
   */
+diff --git a/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/StatusBeacon.kt b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/StatusBeacon.kt
+new file mode 100644
+index 0000000..ceb12ee
+--- /dev/null
++++ b/app/src/main/kotlin/io/github/sparkcyf/voicesipagent/app/StatusBeacon.kt
+@@ -0,0 +1,160 @@
++package io.github.sparkcyf.voicesipagent.app
++
++import android.content.Context
++import android.os.Build
++import io.github.sparkcyf.voicesipagent.privileged.HelperConnector
++import org.json.JSONArray
++import org.json.JSONObject
++import java.io.IOException
++import java.net.HttpURLConnection
++import java.net.URL
++import java.util.concurrent.ScheduledFuture
++import java.util.concurrent.ScheduledThreadPoolExecutor
++import java.util.concurrent.TimeUnit
++
++/**
++ * Tells the Central, every few seconds, how far the phone setup got, so its panel can show a live checklist
++ * instead of leaving the user to guess why nothing happens. It only starts after the Central's own QR was
++ * scanned (that QR carries the Central's address), it never sends passwords or phone numbers, and it stops by
++ * itself after [LIFETIME_MS]. The target survives a process restart until then.
++ */
++internal object StatusBeacon {
++    private const val PREFS = "status_beacon"
++    private const val KEY_URL = "url"
++    private const val KEY_SID = "sid"
++    private const val KEY_UNTIL = "until"
++    private const val KEY_ONLINE = "online"
++    private const val LIFETIME_MS = 45 * 60_000L
++    private const val PERIOD_S = 3L
++    private const val TIMEOUT_MS = 8_000
++    private const val LOG_LINES = 30
++
++    private var executor: ScheduledThreadPoolExecutor? = null
++    private var task: ScheduledFuture<*>? = null
++    @Volatile private var failing = false
++
++    /**
++     * [baseUrl] is the Central's address without the trailing slash; [sid] is the pairing name of its QR.
++     * [online] means [baseUrl] is the relay of the online Central: reports go to its /relato, signed with the
++     * line name and token of the (confirmed) online settings.
++     */
++    fun arm(context: Context, baseUrl: String, sid: String, online: Boolean = false) {
++        val app = context.applicationContext
++        prefs(app).edit()
++            .putString(KEY_URL, baseUrl).putString(KEY_SID, sid).putBoolean(KEY_ONLINE, online)
++            .putLong(KEY_UNTIL, System.currentTimeMillis() + LIFETIME_MS).apply()
++        AppLog.i(if (online) "reporting setup progress to the relay" else "reporting setup progress to the Central")
++        schedule(app)
++    }
++
++    /** Called when the process starts, so a restart in the middle of the setup does not silence the panel. */
++    fun resume(context: Context) {
++        val app = context.applicationContext
++        if (active(app)) schedule(app)
++    }
++
++    private fun prefs(app: Context) = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
++
++    private fun active(app: Context): Boolean {
++        val p = prefs(app)
++        return p.getString(KEY_URL, null) != null && p.getString(KEY_SID, null) != null &&
++            System.currentTimeMillis() < p.getLong(KEY_UNTIL, 0L)
++    }
++
++    @Synchronized
++    private fun schedule(app: Context) {
++        task?.cancel(false)
++        val ex = executor ?: ScheduledThreadPoolExecutor(1) { r ->
++            Thread(r, "status-beacon").apply { isDaemon = true }
++        }.also { executor = it }
++        task = ex.scheduleWithFixedDelay({ tick(app) }, 0L, PERIOD_S, TimeUnit.SECONDS)
++    }
++
++    @Synchronized
++    private fun stop() {
++        task?.cancel(false)
++        task = null
++    }
++
++    private fun tick(app: Context) {
++        val p = prefs(app)
++        val url = p.getString(KEY_URL, null)
++        val sid = p.getString(KEY_SID, null)
++        if (url == null || sid == null || System.currentTimeMillis() >= p.getLong(KEY_UNTIL, 0L)) {
++            p.edit().clear().apply()
++            stop()
++            return
++        }
++        val online = p.getBoolean(KEY_ONLINE, false)
++        try {
++            if (online) {
++                val s = GatewayRuntime.get(app).settings
++                // Until the scanned settings are confirmed in the app there is no line or token to sign with.
++                if (s.sipStack != SipStack.ONLINE || s.username.isBlank() || s.password.isEmpty()) return
++                send(url.trimEnd('/') + "/relato", report(app, sid),
++                    mapOf("X-Sala" to s.username.trim(), "Authorization" to "Bearer ${s.password}"))
++            } else {
++                send(url.trimEnd('/') + "/api/celular/relato", report(app, sid))
++            }
++            if (failing) {
++                failing = false
++                AppLog.i(if (online) "the relay receives the progress reports again" else "the Central receives the progress reports again")
++            }
++        } catch (e: Exception) {
++            if (!failing) {
++                failing = true
++                AppLog.w(if (online) "cannot reach the relay at $url (is the free host still waking up? try again in a minute)"
++                    else "cannot reach the Central at $url (phone and computer on the same Wi-Fi?)", e)
++            }
++        }
++    }
++
++    internal fun report(app: Context, sid: String): JSONObject {
++        val rt = GatewayRuntime.get(app)
++        val h = rt.health.value
++        val helper = rt.shellHelper
++        val state = helper.state
++        return JSONObject().apply {
++            put("sid", sid)
++            put("android", "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
++            put("configurado", rt.settings.sipConfigured)
++            put("pareado", helper.canRestart() || state == HelperConnector.State.CONNECTED)
++            put("helper", state.name)
++            put("helperDetalhe", helper.detail)
++            put("acesso", h.callAccessReady)
++            put("audio", h.audioReady)
++            put("sip", h.sip.ready)
++            put("sipDetalhe", h.sip.detail)
++            put("pronto", h.privilegedReady && h.sip.ready)
++            put("detalhe", h.readinessDetail)
++            put("log", JSONArray(safeLog(rt.settings.password)))
++            put("modo", rt.settings.sipStack.id)
++        }
++    }
++
++    /** The last log lines, with the SIP password (which the log should never hold anyway) masked just in case. */
++    internal fun safeLog(secret: String): List<String> {
++        // The relay accepts up to 16 KB per report: long lines are cut.
++        return AppLog.snapshot(secret, LOG_LINES).map { it.take(240) }
++    }
++
++    private fun send(fullUrl: String, body: JSONObject, headers: Map<String, String> = emptyMap()) {
++        val bytes = body.toString().toByteArray(Charsets.UTF_8)
++        val conn = URL(fullUrl).openConnection() as HttpURLConnection
++        try {
++            conn.requestMethod = "POST"
++            conn.connectTimeout = TIMEOUT_MS
++            conn.readTimeout = TIMEOUT_MS
++            headers.forEach { (k, v) -> conn.setRequestProperty(k, v) }
++            conn.doOutput = true
++            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
++            conn.setFixedLengthStreamingMode(bytes.size)
++            conn.outputStream.use { it.write(bytes) }
++            val code = conn.responseCode
++            if (code !in 200..299) throw IOException("HTTP $code")
++            conn.inputStream.use { it.readBytes() }
++        } finally {
++            conn.disconnect()
++        }
++    }
++}
 diff --git a/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayRuntimeLifecycleTest.kt b/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayRuntimeLifecycleTest.kt
 index c7c73f7..13bab1d 100644
 --- a/app/src/test/kotlin/io/github/sparkcyf/voicesipagent/app/GatewayRuntimeLifecycleTest.kt
@@ -1142,10 +2059,10 @@ index e4fe938..0000000
 -    }
 -}
 diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
-index 4cea406..5a48112 100644
+index 4cea406..db9b1a3 100644
 --- a/gradle/libs.versions.toml
 +++ b/gradle/libs.versions.toml
-@@ -5,7 +5,9 @@ coroutines = "1.11.0"
+@@ -5,11 +5,14 @@ coroutines = "1.11.0"
  coreKtx = "1.19.1"
  activityCompose = "1.13.0"
  composeBom = "2026.09.00"
@@ -1156,7 +2073,12 @@ index 4cea406..5a48112 100644
  junit = "4.13.2"
  mockito = "5.24.0"
  androidJson = "0.0.20131108.vaadin1"
-@@ -20,8 +22,10 @@ androidx-activity-compose = { group = "androidx.activity", name = "activity-comp
+ codeScanner = "16.1.0"
++okhttp = "4.12.0"
+ 
+ [libraries]
+ kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+@@ -20,8 +23,10 @@ androidx-activity-compose = { group = "androidx.activity", name = "activity-comp
  androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
  androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
  androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
@@ -1169,6 +2091,16 @@ index 4cea406..5a48112 100644
  junit = { group = "junit", name = "junit", version.ref = "junit" }
  mockito-core = { group = "org.mockito", name = "mockito-core", version.ref = "mockito" }
  # Android's own org.json implementation, for JVM tests (android.jar only has stubs).
+@@ -29,6 +34,9 @@ android-json = { group = "com.vaadin.external.google", name = "android-json", ve
+ # Google code scanner: a leitura do QR roda dentro do Google Play services e nao pede permissao de camera.
+ mlkit-code-scanner = { group = "com.google.android.gms", name = "play-services-code-scanner", version.ref = "codeScanner" }
+ 
++# WebSocket client of the online stack (OnlineEndpoint): one connection to the Central's relay.
++okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
++
+ [plugins]
+ android-application = { id = "com.android.application", version.ref = "agp" }
+ android-library = { id = "com.android.library", version.ref = "agp" }
 diff --git a/privileged/build.gradle.kts b/privileged/build.gradle.kts
 index 54df6ca..cfd41ff 100644
 --- a/privileged/build.gradle.kts

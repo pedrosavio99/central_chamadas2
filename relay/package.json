@@ -1,0 +1,15 @@
+{
+  "name": "central-relay",
+  "version": "1.0.0",
+  "description": "Relay WebSocket da Central de chamadas: liga o navegador ao celular gateway pela internet (Render gratis)",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/servidor.js",
+    "test": "node teste/e2e.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}

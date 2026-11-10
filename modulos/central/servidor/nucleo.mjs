@@ -73,7 +73,19 @@ function numeroNaoNegativo(txt, padrao) {
 const host = env("ASTERISK_HOST", "localhost");
 const portaHttp = env("ASTERISK_HTTP_PORT", "8088");
 
+// Modo online: o navegador fala com o relay (Render) e nao com um Asterisk. Liga com RELAY_URL, com MODO=online
+// ou sozinho na Vercel (la nao existe Asterisk). MODO=local forca o modo Asterisk mesmo na Vercel.
+function decidirOnline() {
+  const modo = env("MODO", "").toLowerCase();
+  if (modo === "local") return false;
+  if (modo === "online") return true;
+  return !!env("RELAY_URL") || !!process.env.VERCEL;
+}
+
 export const cfg = {
+  online: decidirOnline(),
+  relayUrl: env("RELAY_URL").replace(/\/+$/, ""),
+  apkUrl: env("APK_URL"),
   mock: env("MOCK", "0") === "1",
   somenteLeitura: env("READ_ONLY", "0") === "1",
   cacheMs: numeroNaoNegativo(env("CACHE_TTL_MS", "5000"), 5000),
@@ -101,7 +113,7 @@ export const cfg = {
  * Aqui "token" sao as credenciais do Asterisk. Sem elas nada protegido responde, a nao ser em MOCK.
  */
 export function exigirToken() {
-  if (cfg.mock) return;
+  if (cfg.mock || cfg.online) return;
   const falta = [];
   if (!cfg.sipSenha) falta.push("SIP_SENHA");
   if (!cfg.ariSenha) falta.push("ARI_SENHA");
@@ -177,6 +189,10 @@ function ausente(nome) {
  * Falha do ARI NAO vira erro HTTP: a tela continua util e mostra o motivo no cartao de verificacoes.
  */
 export function buscarEstado() {
+  if (cfg.online) {
+    // No modo online quem sabe do celular e o relay, e o navegador conversa direto com ele.
+    return Promise.resolve({ ok: true, online: true, ari: { ok: true, erro: "", dica: "" }, gateway: null, ramal: null, cache: false, carregadoEm: Date.now() });
+  }
   if (cfg.mock) {
     return comCache("estado-mock", async () => ({
       ok: true,
@@ -214,6 +230,19 @@ export function buscarEstado() {
 /* ===== Config entregue ao navegador ===== */
 
 export function montarConfig() {
+  if (cfg.online && !cfg.mock) {
+    // Nada secreto aqui: so o endereco publico do relay. O codigo de acesso o usuario digita na tela.
+    return {
+      ok: true,
+      mock: false,
+      somenteLeitura: cfg.somenteLeitura,
+      online: { relay: cfg.relayUrl, apk: cfg.apkUrl },
+      gateway: { nome: "celular" },
+      sip: { wsUrl: "", dominio: "online", ramal: "online", senha: "", nomeExibicao: cfg.sipNome },
+      cache: false,
+      carregadoEm: Date.now()
+    };
+  }
   const base = {
     ok: true,
     mock: cfg.mock,
@@ -410,4 +439,56 @@ export function registrarChamada(corpo) {
   chamadas.unshift(item);
   if (chamadas.length > MAX_CHAMADAS) chamadas.length = MAX_CHAMADAS;
   return item;
+}
+
+/* ===== Relato do celular (passo a passo ao vivo) ===== */
+
+// Depois de ler o QR da aba "2. Configurar", o app conta de tempos em tempos em que passo da configuracao esta
+// (pareamento, helper, acesso as chamadas, audio, SIP). Fica so na memoria, por sessao do painel (sid), e some
+// sozinho. Nao carrega senha: o app nunca poe senha no log e ainda troca a senha do SIP por *** antes de mandar.
+const RELATOS = new Map();
+const RELATO_VALIDADE_MS = 30 * 60 * 1000;
+const RELATO_MAX_SESSOES = 8;
+const SID_VALIDO = /^[A-Za-z0-9._-]{4,63}$/;
+
+function textoCurto(v, max) {
+  return String(v ?? "").replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, max);
+}
+
+export function registrarRelato(corpo, agora = Date.now()) {
+  const c = corpo && typeof corpo === "object" ? corpo : {};
+  const sid = textoCurto(c.sid, 63);
+  if (!SID_VALIDO.test(sid)) {
+    throw new ErroHttp(400, "Relato sem sessão válida", "O app manda o campo sid (o nome do pareamento do QR).");
+  }
+  const log = Array.isArray(c.log) ? c.log.slice(-20).map((l) => textoCurto(l, 200)).filter(Boolean) : [];
+  for (const [k, v] of RELATOS) {
+    if (agora - v.recebidoEm > RELATO_VALIDADE_MS) RELATOS.delete(k);
+  }
+  RELATOS.delete(sid);
+  RELATOS.set(sid, {
+    sid,
+    recebidoEm: agora,
+    android: textoCurto(c.android, 60),
+    configurado: c.configurado === true,
+    pareado: c.pareado === true,
+    helper: textoCurto(c.helper, 30),
+    helperDetalhe: textoCurto(c.helperDetalhe, 300),
+    acesso: c.acesso === true,
+    audio: c.audio === true,
+    sip: c.sip === true,
+    sipDetalhe: textoCurto(c.sipDetalhe, 300),
+    pronto: c.pronto === true,
+    detalhe: textoCurto(c.detalhe, 300),
+    log
+  });
+  while (RELATOS.size > RELATO_MAX_SESSOES) RELATOS.delete(RELATOS.keys().next().value);
+  return { ok: true };
+}
+
+export function buscarRelato(sid, agora = Date.now()) {
+  const id = textoCurto(sid, 63);
+  const r = SID_VALIDO.test(id) ? RELATOS.get(id) : undefined;
+  const vivo = r && agora - r.recebidoEm <= RELATO_VALIDADE_MS;
+  return { ok: true, relato: vivo ? { ...r, idadeMs: agora - r.recebidoEm } : null, cache: false, carregadoEm: agora };
 }

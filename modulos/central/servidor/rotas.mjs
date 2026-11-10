@@ -13,7 +13,9 @@ import {
   montarCelular,
   montarApk,
   listarChamadas,
-  registrarChamada
+  registrarChamada,
+  registrarRelato,
+  buscarRelato
 } from "./nucleo.mjs";
 
 const VERSAO = "1.0.0";
@@ -22,6 +24,8 @@ const ROTAS_VALIDAS = [
   "GET /api/health",
   "GET /api/config",
   "GET /api/celular",
+  "POST /api/celular/relato",
+  "GET /api/celular/relato",
   "GET /api/apk",
   "GET /api/estado",
   "GET /api/chamadas",
@@ -103,13 +107,14 @@ export async function rotear(req, url) {
 
   // O health vem primeiro e nao pede credencial: serve para saber se o modulo esta montado.
   if (metodo === "GET" && caminho === "/api/health") {
-    return { ok: true, modulo: "central", versao: VERSAO, mock: cfg.mock, somenteLeitura: cfg.somenteLeitura };
+    return { ok: true, modulo: "central", versao: VERSAO, mock: cfg.mock, somenteLeitura: cfg.somenteLeitura, online: cfg.online, relayConfigurado: !!cfg.relayUrl };
   }
 
   if (metodo === "GET" && caminho === "/api/config") {
     exigirToken();
     verificarOrigem(req);
-    exigirLocal(req);
+    // No modo online o config so tem o endereco publico do relay: pode ser lido de qualquer lugar.
+    if (!cfg.online) exigirLocal(req);
     return montarConfig();
   }
 
@@ -119,6 +124,20 @@ export async function rotear(req, url) {
     verificarOrigem(req);
     exigirLocal(req);
     return montarCelular();
+  }
+
+  // O app do celular conta em que passo da configuracao esta. Quem manda e o celular, na rede local, entao
+  // nao exige "acesso do proprio PC"; so guarda estado (sem senha) e so o proprio PC consegue ler de volta.
+  if (metodo === "POST" && caminho === "/api/celular/relato") {
+    verificarOrigem(req);
+    return registrarRelato(await lerCorpo(req));
+  }
+
+  if (metodo === "GET" && caminho === "/api/celular/relato") {
+    exigirToken();
+    verificarOrigem(req);
+    exigirLocal(req);
+    return buscarRelato(url.searchParams.get("sid"));
   }
 
   // Informacoes do APK servido pela Central (nome, tamanho, SHA-256) e IPs do PC. O download em si e
