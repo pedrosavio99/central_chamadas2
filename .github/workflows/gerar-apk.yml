@@ -7,7 +7,7 @@
 # (compila OpenSSL, Opus e PJSIP para Android do zero). Quando acabar, o APK fica:
 #   - na release "apk-latest" (aba Releases, arquivo central-gateway.apk). O link
 #     https://github.com/<dono>/<repo>/releases/download/apk-latest/central-gateway.apk NUNCA muda: cada execucao troca o
-#     arquivo que esta atras dele. A Central na Vercel usa esse link sozinha para mostrar o QR de download.
+#     arquivo que esta atras dele. A Central usa esse link sozinha para mostrar o QR de download.
 #     (Repositorio privado: o link pede login no GitHub; o celular nao baixa sozinho.)
 #   - no fim da pagina da execucao, em "Artifacts" (um .zip: extraia e instale o .apk no celular).
 #
@@ -298,6 +298,6 @@ jobs:
               echo "**Atencao:** o repositorio e privado, entao este link pede login no GitHub e o celular nao baixa sozinho. Passe o .apk por cabo ou Drive."
             else
               echo
-              echo "A Central na Vercel mostra o QR deste link sozinha (feche e abra a janela Conectar celular)."
+              echo "A Central mostra o QR deste link sozinha (feche e abra a janela Conectar celular)."
             fi
           } >> "$GITHUB_STEP_SUMMARY"

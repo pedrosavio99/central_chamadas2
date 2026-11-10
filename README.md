@@ -3,12 +3,12 @@
 Um discador no navegador que liga e recebe chamadas usando o chip de um celular Android como linha telefônica. Há dois
 modos, que dividem a mesma tela:
 
-- **Online (o padrão):** a Central roda na **Vercel**, um servidor pequeno (o **relay**) roda no **Render**, e o celular
-  conecta nele pela internet. Tudo em plano grátis, de qualquer rede, sem Asterisk nem Wi-Fi em comum.
+- **Online (o padrão):** a Central e um servidor pequeno (o **relay**) rodam juntos num serviço só no **Render**, e o
+  celular conecta nele pela internet. Tudo em plano grátis, de qualquer rede, sem Asterisk nem Wi-Fi em comum.
 - **Local:** a Central e um Asterisk rodam no seu PC e o celular fica no mesmo Wi-Fi. Veja o `PASSO-A-PASSO.md`.
 
 ```text
-Online:  Navegador <--internet--> Relay (Render) <--internet--> Celular (app Voice SIP Agent) <--> chip
+Online:  Navegador <--internet--> Central + relay (Render) <--internet--> Celular (app Voice SIP Agent) <--> chip
 Local:   Navegador (JsSIP) <--> Asterisk (no PC) <--Wi-Fi--> Celular (app Voice SIP Agent) <--> chip
 ```
 
@@ -22,11 +22,11 @@ Este projeto tem um módulo, `modulos/central/` (leia o README dele), e um servi
   de ouvido na Central.
 - O Render grátis dorme após 15 minutos sem tráfego e leva cerca de 1 minuto para acordar. Com o celular conectado ele
   não dorme.
-- A Vercel grátis (Hobby) é para uso pessoal e não comercial.
+- O Render pode pedir um cartão só para verificar a conta, mesmo no plano grátis (veja o `MANUAL.md`).
 - O celular precisa estar ligado, com internet e com o app. O pareamento com a Depuração sem fio é feito uma vez
   (precisa de Wi-Fi nesse momento); depois o app se reconecta sozinho. Não precisa de Shizuku.
 - Cada chamada feita gasta minutos do plano do chip.
-- O que **não** foi testado: o app dentro de um celular, o workflow do GitHub compilando o APK, o Render e a Vercel de
+- O que **não** foi testado: o app dentro de um celular, o workflow do GitHub compilando o APK, o Render de
   verdade e a chamada até o chip. O que foi testado está listado no `MANUAL.md`.
 
 ## Começar
@@ -40,7 +40,8 @@ MOCK=1 MODO=local npm start
 
 Abra `http://localhost:3333/central/`.
 
-Para o sistema de verdade (relay no Render, Central na Vercel, app no celular), siga o **`MANUAL.md`**, Parte 1 em diante.
+Para o sistema de verdade (Central e relay no Render, app no celular), siga o **`MANUAL.md`**, Parte 1 em diante. Para
+testar tudo junto no seu PC: `ACCESS_CODE=um-codigo-longo node src/render.js` e abra `http://localhost:3333/central/`.
 
 ## O que tem aqui
 
@@ -49,12 +50,13 @@ Para o sistema de verdade (relay no Render, Central na Vercel, app no celular), 
 | `MANUAL.md` | O manual: subir tudo, usar no celular e no site, logs, problemas, limites e como crescer |
 | `PASSO-A-PASSO.md` | O guia do modo local, com Asterisk |
 | `AGENTS.md` | O contrato de arquitetura |
-| `relay/` | O servidor que liga o navegador ao celular (Render). README, testes e um "celular de mentira" |
-| `render.yaml` | Cria o relay no Render com um clique (Blueprint) |
+| `relay/` | O servidor que liga o navegador ao celular. README, testes e um "celular de mentira" |
+| `src/render.js` | Entrada única do Render: sobe a Central e o relay juntos, na mesma porta |
+| `render.yaml` | Blueprint do Render (opcional): descreve esse mesmo serviço |
 | `modulos/central/` | A Central: servidor, tela, modelos do Asterisk e instalador |
 | `.github/workflows/gerar-apk.yml` | Compila o app do celular (Voice SIP Agent) no GitHub Actions |
 | `apk/` | `qr-scan.patch` (botão **Scan QR code**) e `sem-shizuku.patch` (o app se pareia sozinho e ganha o modo **online (relay)**, o botão **Copy log** e o envio do log); o workflow aplica os dois antes de compilar |
-| `src/`, `api/`, `public/`, `vercel.json` | O host (Express, página inicial, entrada da Vercel) |
+| `src/`, `api/`, `public/`, `vercel.json` | O host (Express, página inicial, entrada da Vercel, que é opcional) |
 
 ## Créditos e licenças
 

@@ -1,21 +1,21 @@
 # Manual da Central de chamadas (modo online)
 
 Este manual leva você de "nada no ar" até "ligando e atendendo pelo navegador, de qualquer rede, usando o chip de um
-celular Android". Tudo em serviços **gratuitos**: Render (o relay), Vercel (a tela) e GitHub (compila o app).
+celular Android". Tudo em serviços **gratuitos**: Render (a Central e o relay, juntos num serviço só) e GitHub (compila o app).
 
 O modo antigo, com Asterisk no seu PC, continua no projeto: veja o Apêndice A e o `PASSO-A-PASSO.md`.
 
 ## Como as peças se falam
 
 ```
-Navegador (a Central)  <--internet-->  Relay (Render)  <--internet-->  Celular com o app "chipeira"  <-->  chip
- página na Vercel                      passa mensagens                  liga e atende pelo chip
-                                       e áudio
+Navegador (a Central)  <--internet-->  Servidor no Render  <--internet-->  Celular com o app "chipeira"  <-->  chip
+ abre a página dele                    entrega a página e                   liga e atende pelo chip
+                                       passa mensagens e áudio (o relay)
 ```
 
-- A **Central** é a página que você abre no navegador (hospedada na Vercel). Liga e atende pelo navegador.
-- O **relay** é um servidorzinho (Render) que só repassa mensagens e áudio entre a Central e o celular. Ele não grava
-  nada. Por isso o celular e o computador **não precisam estar na mesma rede**: cada um só precisa de internet.
+- A **Central** é a página que você abre no navegador. Ela fica no mesmo serviço do Render que o relay.
+- O **relay** é a parte do servidor que repassa mensagens e áudio entre a Central e o celular. Ele não grava nada. Por
+  isso o celular e o computador **não precisam estar na mesma rede**: cada um só precisa de internet.
 - O **app do celular** (a "chipeira") conecta no relay e faz a ponte: o que você disca na Central, o celular disca pelo
   chip; o que chega no chip, aparece na Central. Não usa Bluetooth.
 - Enquanto o app estiver com **Take over calls** ligado, as chamadas recebidas no chip tocam na Central e não no
@@ -32,14 +32,17 @@ Navegador (a Central)  <--internet-->  Relay (Render)  <--internet-->  Celular c
   "Acordando o servidor". O Render dá 750 horas grátis por mês (um mês tem 744), então um serviço ligado o tempo todo
   cabe.
 - **Uma linha, um atendente por vez.** Uma chamada por vez. Abrir a Central em outra aba tira a linha da primeira.
-- **Vercel grátis é para uso pessoal.** O plano Hobby da Vercel não permite uso comercial. Para testar, serve. Se isso
-  virar operação de uma empresa, use o plano pago da Vercel ou hospede a mesma pasta como segundo serviço no Render
-  (comando `npm start`, variável `RELAY_URL`).
+- **Um serviço só.** A Central e o relay rodam no mesmo serviço do Render, com o mesmo endereço e o mesmo código de
+  acesso. Se um dia você preferir a Central na Vercel (ela é só para uso pessoal), veja o Apêndice C.
+- **O Render pode pedir um cartão.** O plano grátis custa zero, mas o Render às vezes pede um cartão só para verificar a
+  conta (cobra cerca de 1 dólar e devolve), principalmente ao usar o Blueprint. Por isso o passo 1.2 usa a criação
+  manual do serviço. Se ele pedir e você não quiser dar o cartão, pare: existem outras plataformas grátis, mas eu teria
+  que verificar e adaptar o projeto.
 - **Cada chamada feita gasta minutos do plano do chip.** Teste primeiro com o seu próprio número.
-- **O que eu testei e o que não testei.** Testei o relay (22 verificações), a tela num navegador de verdade falando
-  com o relay (áudio nos dois sentidos, chamadas feitas, recebidas, recusadas, DTMF, registro), e o código do app que
+- **O que eu testei e o que não testei.** Testei o relay (22 verificações), o servidor único (a Central e o relay juntos, subindo com o mesmo
+  comando que o Render usa), a tela num navegador de verdade falando com ele (áudio nos dois sentidos, chamadas feitas, recebidas, recusadas, DTMF, registro), e o código do app que
   fala com o relay rodando num ambiente Java contra o relay de verdade (13 verificações). **Não testei**: o app dentro
-  de um celular, o workflow do GitHub compilando o APK, o Render e a Vercel de verdade, e a chamada até o chip. Esses
+  de um celular, o workflow do GitHub compilando o APK, o Render de verdade, e a chamada até o chip. Esses
   são os pontos onde pode haver um ajuste. Por isso existe a aba **Registro** (Parte 5): ela mostra o que o site, o
   relay e o app contam, e você copia tudo com um toque.
 
@@ -47,8 +50,8 @@ Navegador (a Central)  <--internet-->  Relay (Render)  <--internet-->  Celular c
 
 ## Parte 1. Subir o sistema (uma vez só)
 
-Você vai precisar de contas no **GitHub**, no **Render** e na **Vercel**. Nenhuma pede cartão para o plano grátis (se
-alguma pedir, pare e me avise).
+Você vai precisar de contas no **GitHub** e no **Render**. O plano grátis dos dois custa zero (veja acima: o Render
+pode pedir um cartão só para verificar a conta).
 
 ### 1.1 Colocar o projeto no GitHub
 
@@ -63,37 +66,48 @@ git push
 Esperado: o `git push` termina sem erro e a pasta `relay/`, o arquivo `render.yaml` e a pasta `apk/` aparecem no
 repositório do GitHub.
 
-### 1.2 Criar o relay no Render
+### 1.2 Criar o serviço no Render (a Central e o relay juntos)
 
-1. Em render.com, entre com o GitHub. Toque em **New +** e depois em **Blueprint**.
-2. Escolha o repositório do projeto. O Render lê o arquivo `render.yaml` e mostra um serviço chamado
-   **central-relay** (plano Free).
-3. Ele pede o valor de **ACCESS_CODE**. É a "senha da Central": invente um código **com 12 ou mais caracteres**
-   (letras e números). Anote: você vai digitá-lo na tela da Central. Ele não fica no GitHub.
-4. Toque em **Apply** (ou **Deploy Blueprint**) e espere o serviço ficar **Live** (uns 2 a 3 minutos).
-5. Copie o endereço do serviço, algo como `https://central-relay.onrender.com`.
+1. Em render.com, entre com a sua conta do GitHub. Toque em **New +** e depois em **Web Service**.
+2. Escolha **Build and deploy from a Git repository** e selecione o repositório do projeto (se ele não aparecer, libere o
+   acesso ao repositório quando o Render pedir).
+3. Preencha assim (os nomes dos campos podem variar um pouco; o que importa são os valores):
 
-Confira: abra `https://SEU-RELAY.onrender.com/health` no navegador. Esperado: um texto com
-`"servico":"central-relay"` e `"configurado":true`. Se aparecer `"configurado":false`, faltou o ACCESS_CODE: no Render,
-abra o serviço, **Environment**, preencha e salve.
+   | Campo | Valor |
+   |---|---|
+   | **Name** | `central-chamadas` (se o nome já existir, o Render acrescenta letras ao endereço) |
+   | **Language** (ou Runtime) | `Node` |
+   | **Branch** | a principal do repositório (`main` ou `master`) |
+   | **Region** | `Virginia (US East)` (a mais perto do Brasil que o Render tem) |
+   | **Root Directory** | deixe vazio |
+   | **Build Command** | `npm install --omit=dev && npm install --omit=dev --prefix relay` |
+   | **Start Command** | `node src/render.js` |
+   | **Instance Type** | **Free** (confira: nunca escolha um tipo com preço) |
+
+4. Em **Environment Variables**, toque em **Add Environment Variable**: nome `ACCESS_CODE`, valor um código que você
+   inventa **com 12 ou mais caracteres** (letras e números). É a "senha da Central": anote, você vai digitá-la na tela.
+   Ela não fica no GitHub.
+5. Em **Advanced**, procure **Health Check Path** e escreva `/health`.
+6. Toque em **Create Web Service** e espere o status ficar **Live** (3 a 5 minutos na primeira vez, porque ele instala as
+   dependências). Se der erro, abra a aba **Logs** e me envie as últimas linhas.
+7. Copie o endereço do serviço, no topo da página, algo como `https://central-chamadas-xxxx.onrender.com`.
+
+Confira: abra `https://SEU-SERVICO.onrender.com/health` no navegador. Esperado: um texto com `"servico":"central-relay"` e
+`"configurado":true`. Se aparecer `"configurado":false`, faltou o ACCESS_CODE: no Render, abra o serviço,
+**Environment**, preencha e salve.
 
 > Se você mudar o ACCESS_CODE depois, o app do celular deixa de entrar (o token dele nasce do código). Escaneie o QR
 > de novo (Parte 3).
 
-### 1.3 Publicar a Central na Vercel
+Alternativa de um clique: **New +**, **Blueprint**, escolha o repositório (o arquivo `render.yaml` já descreve este
+mesmo serviço) e informe o `ACCESS_CODE`. Alguns usuários relatam que o Blueprint pede cartão mesmo no plano grátis; se
+isso acontecer com você, use o caminho manual acima.
 
-1. Em vercel.com, entre com o GitHub e toque em **Add New**, **Project**. Escolha o mesmo repositório.
-2. Em **Framework Preset** deixe **Other**. Não precisa de comando de build.
-3. Abra **Environment Variables** e acrescente:
+### 1.3 Abrir a Central
 
-   | Nome | Valor | Obrigatória |
-   |---|---|---|
-   | `RELAY_URL` | o endereço do Render, sem barra no fim | sim (senão a tela pergunta o endereço no login) |
-   | `APK_URL` | link do APK, só se você quiser outro lugar que não a release do GitHub (veja 1.4) | não |
-
-4. Toque em **Deploy**. Quando terminar, abra `https://SEU-PROJETO.vercel.app/central/`.
-
-Esperado: a tela de entrada, com o campo **Código de acesso**.
+Abra `https://SEU-SERVICO.onrender.com/central/` (com `/central/` no fim). Esperado: a tela de entrada, com o campo
+**Código de acesso**. Digite o `ACCESS_CODE` e entre: é só isso. Não há o que configurar na tela: o endereço do relay é o
+próprio endereço da página.
 
 ### 1.4 Gerar o APK do celular
 
@@ -104,7 +118,7 @@ No fim, o APK fica em dois lugares:
 
 - **Release `apk-latest`** (aba **Releases** do repositório), arquivo `central-gateway.apk`. O endereço
   `https://github.com/SEU-USUARIO/SEU-REPO/releases/download/apk-latest/central-gateway.apk` **nunca muda**: a cada
-  execução do workflow o arquivo que está atrás dele é trocado pelo novo. A Central (na Vercel) descobre esse
+  execução do workflow o arquivo que está atrás dele é trocado pelo novo. A Central descobre esse
   endereço sozinha e mostra um **QR para baixar o APK** na janela **Conectar celular**, aba 1. Você não configura nada e
   não precisa subir o APK para lugar nenhum.
 - **Artifacts**, no fim da página da execução, dentro de um `.zip`. Baixe e extraia.
@@ -117,9 +131,9 @@ Importante sobre o link automático:
 - Só funciona com repositório **público**. Em repositório privado o link da release pede login no GitHub e o celular não
   baixa sozinho: passe o `.apk` por cabo, Drive ou WhatsApp para você mesmo. O resumo da execução avisa quando isso
   acontece.
-- A Central usa as variáveis de sistema da Vercel (`VERCEL_GIT_REPO_OWNER` e `VERCEL_GIT_REPO_SLUG`). Se você desligou
-  "Automatically expose System Environment Variables" no projeto da Vercel, ou hospeda a Central em outro lugar, crie
-  `APK_URL` com o link acima.
+- A Central fica sabendo qual é o seu repositório pela variável de sistema que o Render dá ao serviço
+  (`RENDER_GIT_REPO_SLUG`). Se por qualquer motivo o QR não aparecer mesmo com repositório público, crie no Render, em
+  **Environment**, a variável `APK_URL` com o link acima.
 - `APK_URL`, se existir, tem prioridade sobre o link automático.
 
 Se o build falhar, abra a execução, copie as últimas linhas do log do passo que ficou vermelho e me envie.
@@ -171,7 +185,7 @@ Antes de mexer no celular, confirme que o site e o relay se entendem usando um "
    ```bash
    cd relay
    npm install
-   node teste/fone-falso.mjs --url https://SEU-RELAY.onrender.com --codigo SEU_ACCESS_CODE
+   node teste/fone-falso.mjs --url https://SEU-SERVICO.onrender.com --codigo SEU_ACCESS_CODE
    ```
 
    Esperado: uma linha `[fone-falso] no ar. Aguardando ligacoes` (pode levar 1 minuto se o relay estava dormindo).
@@ -251,7 +265,7 @@ disso, escaneie o QR de novo. Mesmo sem relatar, o celular conecta no relay assi
 
 ### 4.1 Entrar
 
-Abra `https://SEU-PROJETO.vercel.app/central/`, digite o **código de acesso** (o ACCESS_CODE) e toque em **Entrar**. A
+Abra `https://SEU-SERVICO.onrender.com/central/`, digite o **código de acesso** (o ACCESS_CODE) e toque em **Entrar**. A
 tela lembra o código neste navegador e entra sozinha nas próximas vezes. **Sair** esquece o código.
 
 Se aparecer "Acordando o servidor", espere até 1 minuto: é o Render grátis saindo do sono.
@@ -309,10 +323,10 @@ Para acompanharmos juntos o que acontece, há logs nos dois lados e dá para cop
 
 | Sintoma | Causa provável | O que fazer |
 |---|---|---|
-| "Acordando o servidor" por mais de 2 minutos | Endereço errado, ou o serviço não está Live | Abra `https://SEU-RELAY.onrender.com/health`; no Render veja se está **Live** e leia os **Logs** |
+| "Acordando o servidor" por mais de 2 minutos | Endereço errado, ou o serviço não está Live | Abra `https://SEU-SERVICO.onrender.com/health`; no Render veja se está **Live** e leia os **Logs** |
 | `configurado:false` no `/health` | Faltou o ACCESS_CODE | Render, **Environment**, preencher e salvar |
 | "Código recusado" | Código diferente do ACCESS_CODE | Digite o valor que está no Render. Com 10 tentativas erradas em 10 minutos, o relay bloqueia seu IP por 10 minutos |
-| A tela pede o endereço do relay | A variável `RELAY_URL` não foi criada na Vercel | Vercel, **Settings**, **Environment Variables**, criar e fazer **Redeploy** (ou digite o endereço na tela) |
+| A tela pede o endereço do relay | Só acontece se a Central estiver na Vercel (Apêndice C) sem a variável `RELAY_URL` | Crie `RELAY_URL` na Vercel e faça **Redeploy**, ou digite o endereço do Render na tela |
 | Celular gateway sempre vermelho | O app não conectou ao relay | Veja a lista ao vivo e o Registro: a linha **app** diz o motivo (token recusado, sem rede, helper) |
 | App diz "refused the token" | ACCESS_CODE mudou ou o QR é de outra linha | Escaneie de novo o QR da aba 2 |
 | App diz "another phone took over this line" | Outro celular (ou o fone falso) entrou na mesma linha | Feche o outro e reabra o app |
@@ -323,11 +337,11 @@ Para acompanharmos juntos o que acontece, há logs nos dois lados e dá para cop
 | Caiu no meio da chamada | O Render reiniciou o serviço, ou a rede do celular caiu | A tela e o app reconectam sozinhos em segundos; ligue de novo |
 | Workflow vermelho no passo "Baixar PJSIP, OpenSSL e Opus", ou "SSL_ERROR_SYSCALL" ao baixar | Queda de rede passageira em um dos sites de download | O passo já tenta 5 vezes em até 3 endereços. Se ainda assim falhar, abra a execução e toque em **Re-run all jobs** |
 | Android recusa instalar o APK novo ("app não instalado" ou conflito de assinatura) | O APK novo foi assinado com outra chave que o instalado | Desinstale o app antigo, instale o novo e escaneie o QR da aba 2. Para não repetir, faça o passo 1.5 |
-| QR de download do APK não aparece | Repositório privado, workflow ainda não terminou, ou a Vercel não expõe as variáveis de sistema | Veja 1.4: passe o `.apk` por cabo/Drive, espere o workflow, ou crie `APK_URL` na Vercel |
+| QR de download do APK não aparece | Repositório privado, workflow ainda não terminou, ou o Render não informou o repositório | Veja 1.4: passe o `.apk` por cabo/Drive, espere o workflow, ou crie `APK_URL` no Render (Environment) |
 | "Ocupado" ao ligar | Já há uma chamada na linha | Encerre a atual |
 | Toda ligação da Central falha | Número fora do padrão ou chip sem crédito | Teste com o seu número e leia a causa no Registro |
 
-Para investigar sem o site: `https://SEU-RELAY.onrender.com/log?sala=principal&codigo=SEU_ACCESS_CODE` mostra o registro
+Para investigar sem o site: `https://SEU-SERVICO.onrender.com/log?sala=principal&codigo=SEU_ACCESS_CODE` mostra o registro
 do relay para a linha. Cuidado: esse endereço leva o código, não o compartilhe.
 
 ---
@@ -354,17 +368,31 @@ camada não obriga a mexer nas outras.
 ## Apêndice A. Modo local com Asterisk (continua funcionando)
 
 O modo antigo, em que o Asterisk roda no seu PC e o celular precisa estar no mesmo Wi-Fi, não foi removido. Ele vale
-quando o servidor roda no seu PC (`npm start`, sem `RELAY_URL`). Para forçar esse modo mesmo na Vercel, use
+quando o servidor roda no seu PC (`npm start`, sem `RELAY_URL`). Para forçar esse modo mesmo no Render ou na Vercel, use
 `MODO=local`. O guia completo está no `PASSO-A-PASSO.md`. No app, escolha **SIP stack** = *pjsua2* em vez de *online (relay)*.
 
 ## Apêndice B. Variáveis de ambiente, resumo
 
 | Onde | Nome | Para quê |
 |---|---|---|
-| Render (relay) | `ACCESS_CODE` | Obrigatória. Código de entrada; dele nasce o token de cada celular |
-| Render (relay) | `ORIGINS` | Opcional. Endereços de site aceitos no WebSocket, separados por vírgula. Depois que tudo funcionar, coloque o da Vercel |
-| Render (relay) | `MAX_SALAS` | Opcional. Quantas linhas ao mesmo tempo (padrão 50) |
-| Vercel (Central) | `RELAY_URL` | Endereço do relay. Liga o modo online |
-| Vercel (Central) | `APK_URL` | Opcional. Link do APK para o QR de download. Sem ele, a Central usa sozinha o link fixo da release `apk-latest` (repositório público) |
+| Render | `ACCESS_CODE` | Obrigatória. Código de entrada; dele nasce o token de cada celular |
+| Render | `APK_URL` | Opcional. Link do APK para o QR de download. Sem ele, a Central usa sozinha o link fixo da release `apk-latest` (repositório público) |
+| Render | `ORIGINS` | Opcional. Endereços de site aceitos no WebSocket, separados por vírgula. Vazio aceita qualquer um que saiba o código. Só faz sentido se a Central estiver em outro endereço (Apêndice C) |
+| Render | `MAX_SALAS` | Opcional. Quantas linhas ao mesmo tempo (padrão 50) |
+| Render | `MODO` | Opcional. O padrão já é `online`; `local` força o modo Asterisk |
 | GitHub (Actions secret) | `ANDROID_DEBUG_KEYSTORE_B64` | Opcional. Chave de assinatura fixa, para o APK novo instalar por cima do antigo (veja 1.5) |
-| Vercel (Central) | `MODO` | Opcional. `online` ou `local` para forçar um dos modos |
+
+## Apêndice C. Opcional: a Central na Vercel e o relay à parte
+
+Você não precisa disto. O caminho padrão (Parte 1) é um serviço só, no Render. Use este apêndice se quiser a tela na
+Vercel e o relay sozinho no Render.
+
+- **Relay sozinho no Render:** crie o serviço com **Root Directory** `relay`, **Build Command** `npm install --omit=dev`
+  e **Start Command** `npm start`, com o mesmo `ACCESS_CODE`.
+- **Central na Vercel:** em vercel.com, **Add New**, **Project**, escolha o repositório, **Framework Preset** `Other`,
+  raiz `./`, sem comando de build. Em **Environment Variables** crie `RELAY_URL` com o endereço do relay, sem barra no
+  fim (opcional: `APK_URL`). **Deploy**, e abra `https://SEU-PROJETO.vercel.app/central/`.
+- Se o link automático do APK não aparecer na Vercel, confira se o projeto expõe as variáveis de sistema
+  (`VERCEL_GIT_REPO_OWNER` e `VERCEL_GIT_REPO_SLUG`) ou crie `APK_URL`.
+- **O plano Hobby da Vercel é só para uso pessoal e não comercial.**
+- Depois que tudo funcionar, você pode preencher `ORIGINS` no relay com o endereço da Vercel.

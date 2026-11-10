@@ -11,6 +11,7 @@ import {
   buscarEstado,
   montarConfig,
   descobrirApkOnline,
+  origemPublica,
   montarCelular,
   montarApk,
   listarChamadas,
@@ -108,7 +109,7 @@ export async function rotear(req, url) {
 
   // O health vem primeiro e nao pede credencial: serve para saber se o modulo esta montado.
   if (metodo === "GET" && caminho === "/api/health") {
-    return { ok: true, modulo: "central", versao: VERSAO, mock: cfg.mock, somenteLeitura: cfg.somenteLeitura, online: cfg.online, relayConfigurado: !!cfg.relayUrl };
+    return { ok: true, modulo: "central", versao: VERSAO, mock: cfg.mock, somenteLeitura: cfg.somenteLeitura, online: cfg.online, relayConfigurado: !!cfg.relayUrl || cfg.relayEmbutido };
   }
 
   if (metodo === "GET" && caminho === "/api/config") {
@@ -117,6 +118,8 @@ export async function rotear(req, url) {
     // No modo online o config so tem o endereco publico do relay: pode ser lido de qualquer lugar.
     if (!cfg.online) exigirLocal(req);
     const config = montarConfig();
+    // Relay embutido (src/render.js): o relay e este mesmo servidor, entao o endereco dele e o da propria pagina.
+    if (config.online && !config.online.relay && cfg.relayEmbutido) config.online.relay = origemPublica(req);
     // Sem APK_URL, tenta o link fixo da release do repositorio (so se ela existir de verdade).
     if (config.online && !config.online.apk) config.online.apk = await descobrirApkOnline();
     return config;

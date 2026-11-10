@@ -177,7 +177,7 @@ function historicoLocalGravar(itens) {
 
 function onNavegadorLinha() {
   if (!window.isSecureContext) {
-    return { nivel: "erro", titulo: "Navegador", texto: "O microfone fica bloqueado neste endereço. Abra a Central por HTTPS (o endereço da Vercel) ou por http://localhost." };
+    return { nivel: "erro", titulo: "Navegador", texto: "O microfone fica bloqueado neste endereço. Abra a Central por HTTPS (o endereço do Render) ou por http://localhost." };
   }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     return { nivel: "erro", titulo: "Navegador", texto: "Este navegador não libera o microfone. Use Chrome, Edge, Firefox ou Safari atuais." };
@@ -309,7 +309,7 @@ function htmlGate(e) {
     (precisaRelay
       ? '<label class="ch-audio-rot" for="campoRelay">Endereço do relay (Render)</label>' +
         '<input id="campoRelay" class="ch-cel-campo" type="url" inputmode="url" autocomplete="off" placeholder="https://central-relay.onrender.com" value="' + esc(ON.relay) + '">' +
-        '<p class="ch-dica">Dica: coloque esse endereço na variável RELAY_URL da Vercel e este campo some.</p>'
+        '<p class="ch-dica">Dica: se a Central estiver na Vercel, coloque esse endereço na variável RELAY_URL e este campo some. No Render isso já é automático.</p>'
       : "") +
     '<label class="ch-audio-rot" for="campoCodigo">Código de acesso</label>' +
     '<input id="campoCodigo" class="ch-cel-campo" type="password" autocomplete="current-password" placeholder="seu código" value="' + esc(ON.codigo) + '">' +
@@ -475,7 +475,7 @@ function htmlGuia() {
   var h = "";
   h += onSecao(
     "Como funciona",
-    "<p>O navegador (esta página, na Vercel) fala com um servidor chamado <strong>relay</strong> (no Render, grátis). O app no celular (a chipeira) também fala com o relay. " +
+    "<p>O navegador (esta página) fala com um servidor chamado <strong>relay</strong> (no Render, grátis, no mesmo serviço desta página). O app no celular (a chipeira) também fala com o relay. " +
       "O relay só passa as mensagens e o áudio de um lado para o outro. Por isso o celular e o computador <strong>não precisam estar na mesma rede</strong>: cada um só precisa de internet.</p>" +
       "<p>Quando você liga, o app no celular disca pelo chip e liga o áudio da chamada ao seu navegador.</p>",
     true
@@ -619,7 +619,7 @@ function htmlApkOnline() {
     h += '<p class="ch-dica"><strong>Sem câmera ou sem o link?</strong> Faça pelos passos abaixo.</p>' + passos;
   } else {
     h += passos;
-    h += '<p class="ch-dica">Quando o workflow terminar, o QR para baixar o APK aparece aqui sozinho (feche e abra esta janela). Isso só funciona com repositório <strong>público</strong>. Se o seu for privado, o link da release pede login no GitHub: passe o .apk por cabo ou Drive, ou coloque um link direto na variável APK_URL da Vercel.</p>';
+    h += '<p class="ch-dica">Quando o workflow terminar, o QR para baixar o APK aparece aqui sozinho (feche e abra esta janela). Isso só funciona com repositório <strong>público</strong>. Se o seu for privado, o link da release pede login no GitHub: passe o .apk por cabo ou Drive, ou coloque um link direto na variável APK_URL (no Render, em Environment).</p>';
   }
   h += '<p class="ch-dica"><strong>Atualizando o app?</strong> Se o Android recusar instalar por cima do app antigo ("conflito de assinatura"), desinstale o antigo, instale o novo e escaneie o QR da aba 2 de novo. Para as próximas atualizações entrarem por cima, veja "Chave de assinatura fixa" no MANUAL.md.</p>';
   return h;

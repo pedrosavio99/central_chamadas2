@@ -7,7 +7,7 @@ mensagens de controle (JSON) e áudio (PCM bruto) de um lado para o outro. Não 
 Navegador (operador) <-- WSS --> relay <-- WSS --> App do celular (celular)
 ```
 
-Feito para rodar de graça no **Render** (arquivo `render.yaml` na raiz do projeto). Funciona em qualquer lugar que rode
+Feito para rodar de graça no **Render**. Por padrão ele roda junto com a Central, no mesmo serviço (`src/render.js` na raiz do projeto); também pode rodar sozinho (`npm start` nesta pasta). Funciona em qualquer lugar que rode
 Node 20 ou mais novo.
 
 ## Rodar no seu PC

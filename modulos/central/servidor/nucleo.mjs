@@ -73,18 +73,21 @@ function numeroNaoNegativo(txt, padrao) {
 const host = env("ASTERISK_HOST", "localhost");
 const portaHttp = env("ASTERISK_HTTP_PORT", "8088");
 
-// Modo online: o navegador fala com o relay (Render) e nao com um Asterisk. Liga com RELAY_URL, com MODO=online
-// ou sozinho na Vercel (la nao existe Asterisk). MODO=local forca o modo Asterisk mesmo na Vercel.
+// Modo online: o navegador fala com o relay (Render) e nao com um Asterisk. Liga com RELAY_URL, com MODO=online,
+// com o relay embutido (src/render.js, tudo num servidor so) ou sozinho na Vercel (la nao existe Asterisk).
+// MODO=local forca o modo Asterisk mesmo na Vercel.
 function decidirOnline() {
   const modo = env("MODO", "").toLowerCase();
   if (modo === "local") return false;
   if (modo === "online") return true;
-  return !!env("RELAY_URL") || !!process.env.VERCEL;
+  return !!env("RELAY_URL") || !!process.env.VERCEL || env("RELAY_EMBUTIDO", "0") === "1";
 }
 
 export const cfg = {
   online: decidirOnline(),
   relayUrl: env("RELAY_URL").replace(/\/+$/, ""),
+  // Ligado por src/render.js: o relay roda dentro deste mesmo servidor, entao o endereco dele e o da propria pagina.
+  relayEmbutido: env("RELAY_EMBUTIDO", "0") === "1",
   apkUrl: env("APK_URL"),
   mock: env("MOCK", "0") === "1",
   somenteLeitura: env("READ_ONLY", "0") === "1",
@@ -234,12 +237,34 @@ export function buscarEstado() {
 export const APK_RELEASE_TAG = "apk-latest";
 export const APK_RELEASE_ARQUIVO = "central-gateway.apk";
 
-/** "dono/repo" do repositorio que a Vercel clonou (variaveis de sistema dela); "" se nao der para saber. */
+/** Um nome de dono ou de repositorio do GitHub: letras, numeros, ponto, hifen e sublinhado, e nunca so pontos. */
+function nomeGitValido(txt) {
+  return /^[\w.-]+$/.test(txt) && !/^\.+$/.test(txt);
+}
+
+/** "dono/repo" do repositorio que o Render ou a Vercel clonou (variaveis de sistema deles); "" se nao der para saber. */
 export function repositorioGit(ambiente = process.env) {
-  const dono = ambiente.VERCEL_GIT_REPO_OWNER;
-  const nome = ambiente.VERCEL_GIT_REPO_SLUG;
-  if (dono && nome && /^[\w.-]+$/.test(dono) && /^[\w.-]+$/.test(nome)) return dono + "/" + nome;
+  const [dono, nome, resto] = String(ambiente.RENDER_GIT_REPO_SLUG || "").split("/");
+  if (dono && nome && resto === undefined && nomeGitValido(dono) && nomeGitValido(nome)) return dono + "/" + nome;
+  const vdono = ambiente.VERCEL_GIT_REPO_OWNER;
+  const vnome = ambiente.VERCEL_GIT_REPO_SLUG;
+  if (vdono && vnome && nomeGitValido(vdono) && nomeGitValido(vnome)) return vdono + "/" + vnome;
   return "";
+}
+
+/**
+ * O endereco deste servidor como o navegador do usuario o enxerga (https://algo.onrender.com), para o relay embutido.
+ * Usa o cabecalho Host (e X-Forwarded-Proto atras do proxy do Render); sem ele, o RENDER_EXTERNAL_URL do Render.
+ */
+export function origemPublica(req, ambiente = process.env) {
+  const host = String((req.headers && req.headers.host) || "").trim();
+  if (/^[\w.-]+(:\d+)?$/.test(host)) {
+    const proto = String((req.headers && req.headers["x-forwarded-proto"]) || "").split(",")[0].trim().toLowerCase();
+    const seguro = proto === "https" || (!proto && !!(req.socket && req.socket.encrypted));
+    return (seguro ? "https://" : "http://") + host;
+  }
+  const fixa = String(ambiente.RENDER_EXTERNAL_URL || "").replace(/\/+$/, "");
+  return /^https?:\/\/[^/\s]+$/i.test(fixa) ? fixa : "";
 }
 
 export function urlApkRelease(repo) {

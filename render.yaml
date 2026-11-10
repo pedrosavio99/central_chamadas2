@@ -1,16 +1,18 @@
-# Blueprint do Render (plano gratis). Cria so o relay; o site vai na Vercel.
+# Blueprint do Render (plano gratis): UM servico com o site (a Central) e o relay juntos.
 # Passo a passo no MANUAL.md. O ACCESS_CODE e pedido na tela do Render ao criar (nao fica no GitHub).
 services:
   - type: web
-    name: central-relay
+    name: central-chamadas
     runtime: node
     plan: free
     region: virginia
-    rootDir: relay
-    buildCommand: npm install --omit=dev
-    startCommand: npm start
+    # Raiz: site (express, cors, dotenv). relay/: so a biblioteca ws, que o relay usa.
+    buildCommand: npm install --omit=dev && npm install --omit=dev --prefix relay
+    startCommand: node src/render.js
     healthCheckPath: /health
     autoDeploy: true
     envVars:
       - key: ACCESS_CODE
         sync: false
+      - key: MODO
+        value: online

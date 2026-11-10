@@ -43,6 +43,7 @@ projeto/
 ├── src/
 │   ├── app.js                    # Express factory/export; NO listen
 │   ├── server.js                 # Local entry; imports app + listen
+│   ├── render.js                 # Render entry: app + relay/ on ONE http server (relay owns /health, /relato, /log, /ws)
 │   ├── routes/                   # Host routes
 │   └── db.js                     # Host data access
 ├── public/

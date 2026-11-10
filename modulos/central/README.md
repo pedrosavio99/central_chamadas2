@@ -22,7 +22,7 @@ Navegador (JsSIP, WebSocket + WebRTC) <-> Asterisk <-> UDP na rede local <-> Cel
   consegue ler o histórico e o estado. As credenciais do ramal só saem para o próprio PC (ver Segurança).
 - **Só localhost.** O navegador só libera o microfone em `http://localhost` ou HTTPS. Abra sempre por
   `http://localhost:3333/central/`.
-- **Modo local (este README, Asterisk) não vai para a Vercel.** O Asterisk fica no PC e a Vercel não o alcança. Para a Vercel existe o **modo online** (próxima seção).
+- **Modo local (este README, Asterisk) não vai para a nuvem (Render ou Vercel).** O Asterisk fica no PC e a nuvem não o alcança. Para a nuvem existe o **modo online** (próxima seção).
 - **Histórico só na memória do servidor** (últimas 200 chamadas). Reiniciar o servidor apaga.
 - **Cada chamada feita gasta minutos do plano do chip.**
 
@@ -30,7 +30,7 @@ Navegador (JsSIP, WebSocket + WebRTC) <-> Asterisk <-> UDP na rede local <-> Cel
 
 O mesmo módulo também serve a Central online: em vez de falar com um Asterisk, o navegador fala com o **relay**
 (`relay/`, no Render) e o celular conecta nele. O servidor escolhe o modo sozinho: **online** se existe `RELAY_URL`, se
-`MODO=online` ou se roda na Vercel; `MODO=local` força o modo Asterisk. A tela é a mesma, com mais três arquivos:
+`MODO=online`, se roda com o relay embutido (`node src/render.js`, como no Render) ou se roda na Vercel; `MODO=local` força o modo Asterisk. A tela é a mesma, com mais três arquivos:
 
 | Arquivo | Papel |
 |---|---|
