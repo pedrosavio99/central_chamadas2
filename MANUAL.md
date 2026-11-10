@@ -89,7 +89,7 @@ abra o serviço, **Environment**, preencha e salve.
    | Nome | Valor | Obrigatória |
    |---|---|---|
    | `RELAY_URL` | o endereço do Render, sem barra no fim | sim (senão a tela pergunta o endereço no login) |
-   | `APK_URL` | link público do APK, se você quiser que a Central mostre um QR para baixar | não |
+   | `APK_URL` | link do APK, só se você quiser outro lugar que não a release do GitHub (veja 1.4) | não |
 
 4. Toque em **Deploy**. Quando terminar, abra `https://SEU-PROJETO.vercel.app/central/`.
 
@@ -98,11 +98,67 @@ Esperado: a tela de entrada, com o campo **Código de acesso**.
 ### 1.4 Gerar o APK do celular
 
 No GitHub, abra o repositório, aba **Actions**, escolha **Gerar APK do celular gateway**, toque em **Run workflow** e
-deixe a versão padrão. Leva de 15 a 40 minutos (compila o áudio e o SIP do zero). No fim, o APK fica em
-**Artifacts**, dentro de um `.zip`. Baixe, extraia e passe o `.apk` para o celular (cabo, Drive, WhatsApp para você
-mesmo).
+deixe a versão padrão. Leva de 15 a 40 minutos (compila o áudio e o SIP do zero).
+
+No fim, o APK fica em dois lugares:
+
+- **Release `apk-latest`** (aba **Releases** do repositório), arquivo `central-gateway.apk`. O endereço
+  `https://github.com/SEU-USUARIO/SEU-REPO/releases/download/apk-latest/central-gateway.apk` **nunca muda**: a cada
+  execução do workflow o arquivo que está atrás dele é trocado pelo novo. A Central (na Vercel) descobre esse
+  endereço sozinha e mostra um **QR para baixar o APK** na janela **Conectar celular**, aba 1. Você não configura nada e
+  não precisa subir o APK para lugar nenhum.
+- **Artifacts**, no fim da página da execução, dentro de um `.zip`. Baixe e extraia.
+
+Esperado: na página da execução, no resumo, aparece **Link fixo do APK**. Depois, no site, **Conectar celular** mostra o QR
+(se não aparecer, feche e abra a janela; a Central confere a cada 20 segundos enquanto a release não existe).
+
+Importante sobre o link automático:
+
+- Só funciona com repositório **público**. Em repositório privado o link da release pede login no GitHub e o celular não
+  baixa sozinho: passe o `.apk` por cabo, Drive ou WhatsApp para você mesmo. O resumo da execução avisa quando isso
+  acontece.
+- A Central usa as variáveis de sistema da Vercel (`VERCEL_GIT_REPO_OWNER` e `VERCEL_GIT_REPO_SLUG`). Se você desligou
+  "Automatically expose System Environment Variables" no projeto da Vercel, ou hospeda a Central em outro lugar, crie
+  `APK_URL` com o link acima.
+- `APK_URL`, se existir, tem prioridade sobre o link automático.
 
 Se o build falhar, abra a execução, copie as últimas linhas do log do passo que ficou vermelho e me envie.
+
+### 1.5 Chave de assinatura fixa (opcional, recomendado)
+
+O APK é uma build de teste (debug). O runner do GitHub cria uma chave de assinatura nova a cada execução, e o Android
+**recusa instalar um APK assinado com outra chave por cima do app antigo** ("conflito de assinatura" ou "app não
+instalado"). Sem este passo, a cada APK novo você precisa desinstalar o antigo, instalar o novo e escanear o QR da
+aba 2 de novo (o pareamento da Depuração sem fio também se refaz).
+
+Com uma chave fixa, o APK novo entra por cima, sem perder configuração. São 2 minutos, uma vez só, no seu computador:
+
+1. Gere a chave **fora da pasta do projeto** (nunca suba esse arquivo para o GitHub):
+
+   ```
+   cd ~
+   keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+   ```
+
+   Esperado: a última linha é `[Storing debug.keystore]`. Se der `keytool: command not found`, instale o Java:
+   `sudo apt install default-jre-headless`.
+
+2. Gere o texto do segredo e copie a linha inteira que aparecer (é uma linha longa só):
+
+   ```
+   base64 -w0 ~/debug.keystore
+   ```
+
+3. No GitHub, no repositório: **Settings**, **Secrets and variables**, **Actions**, **New repository secret**. Em **Name**
+   escreva `ANDROID_DEBUG_KEYSTORE_B64` e em **Secret** cole a linha. Toque em **Add secret**.
+4. Rode o workflow de novo (1.4). No passo **Usar a chave de assinatura fixa** do log deve aparecer "Chave de assinatura
+   fixa restaurada".
+
+Guarde uma cópia do `~/debug.keystore` em lugar seguro. Se perder, gere outra e troque o segredo: nesse caso o APK
+seguinte volta a exigir desinstalar o antigo uma vez.
+
+O primeiro APK com a chave fixa ainda exige desinstalar o app que você já tem instalado (ele foi assinado com outra
+chave). A partir do segundo, entra por cima.
 
 ---
 
@@ -136,7 +192,9 @@ Tudo isso também aparece dentro da Central: toque no **?** no topo (guia) e no 
 
 ### 3.1 Instalar o app
 
-1. Abra o `.apk` no celular. O Android pede para permitir "instalar apps desconhecidos": permita.
+1. Baixe o APK: no site, **Conectar celular**, aba 1, aponte a câmera para o QR (se ele aparecer; veja 1.4), ou passe o
+   `.apk` por cabo/Drive. Abra o `.apk` no celular. O Android pede para permitir "instalar apps desconhecidos": permita.
+   Se o Android disser que o app não pode ser instalado por cima do que já existe, desinstale o antigo primeiro (veja 1.5).
 2. Samsung: se não deixar instalar, desligue o **Auto Blocker** (Configurações, Segurança e privacidade).
 
 ### 3.2 Preparar o Android
@@ -263,6 +321,8 @@ Para acompanharmos juntos o que acontece, há logs nos dois lados e dá para cop
 | Eco | Alto-falante e microfone juntos | Fone de ouvido |
 | Áudio picotado ou com atraso grande | Rede ruim em um dos lados | Teste com Wi-Fi bom nos dois lados; é uma limitação do modo grátis por WebSocket |
 | Caiu no meio da chamada | O Render reiniciou o serviço, ou a rede do celular caiu | A tela e o app reconectam sozinhos em segundos; ligue de novo |
+| Android recusa instalar o APK novo ("app não instalado" ou conflito de assinatura) | O APK novo foi assinado com outra chave que o instalado | Desinstale o app antigo, instale o novo e escaneie o QR da aba 2. Para não repetir, faça o passo 1.5 |
+| QR de download do APK não aparece | Repositório privado, workflow ainda não terminou, ou a Vercel não expõe as variáveis de sistema | Veja 1.4: passe o `.apk` por cabo/Drive, espere o workflow, ou crie `APK_URL` na Vercel |
 | "Ocupado" ao ligar | Já há uma chamada na linha | Encerre a atual |
 | Toda ligação da Central falha | Número fora do padrão ou chip sem crédito | Teste com o seu número e leia a causa no Registro |
 
@@ -304,5 +364,6 @@ quando o servidor roda no seu PC (`npm start`, sem `RELAY_URL`). Para forçar es
 | Render (relay) | `ORIGINS` | Opcional. Endereços de site aceitos no WebSocket, separados por vírgula. Depois que tudo funcionar, coloque o da Vercel |
 | Render (relay) | `MAX_SALAS` | Opcional. Quantas linhas ao mesmo tempo (padrão 50) |
 | Vercel (Central) | `RELAY_URL` | Endereço do relay. Liga o modo online |
-| Vercel (Central) | `APK_URL` | Opcional. Link público do APK para a Central mostrar um QR |
+| Vercel (Central) | `APK_URL` | Opcional. Link do APK para o QR de download. Sem ele, a Central usa sozinha o link fixo da release `apk-latest` (repositório público) |
+| GitHub (Actions secret) | `ANDROID_DEBUG_KEYSTORE_B64` | Opcional. Chave de assinatura fixa, para o APK novo instalar por cima do antigo (veja 1.5) |
 | Vercel (Central) | `MODO` | Opcional. `online` ou `local` para forçar um dos modos |

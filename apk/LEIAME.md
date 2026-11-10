@@ -1,5 +1,9 @@
 # apk/ (alteracoes no app do celular)
 
+Cada execucao do workflow tambem publica o APK na release fixa `apk-latest` (arquivo `central-gateway.apk`, link que nao muda)
+e a Central mostra o QR de download dele sozinha. Para o APK novo instalar por cima do antigo, crie o segredo opcional
+`ANDROID_DEBUG_KEYSTORE_B64` (MANUAL.md, 1.5); sem ele, desinstale o antigo antes. Detalhes no MANUAL.md, 1.4.
+
 O app Voice SIP Agent e de terceiros (https://github.com/sparkcyf/android-voice-sip-agent, GPL-2.0). Este
 repositorio nao guarda uma copia dele: o workflow `.github/workflows/gerar-apk.yml` baixa o codigo na versao
 fixada e, antes de compilar, aplica os patches desta pasta (nesta ordem: `qr-scan`, `sem-shizuku`).

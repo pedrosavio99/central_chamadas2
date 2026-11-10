@@ -589,22 +589,39 @@ function abrirCelularOnline() {
   renderCelParQr();
   renderCelRelato();
   agendarQr();
+  // O link do APK pode ter aparecido depois que a pagina carregou (o workflow acabou de terminar): pergunta de novo.
+  if (!(S.config && S.config.online && S.config.online.apk)) {
+    api("/api/config").then(
+      function (c) {
+        if (c && c.online && c.online.apk && S.config && S.config.online) {
+          S.config.online.apk = c.online.apk;
+          renderCelApk();
+        }
+      },
+      function () {}
+    );
+  }
 }
 
 function htmlApkOnline() {
   var url = (S.config && S.config.online && S.config.online.apk) || "";
-  var h = '<ol class="ch-cel-passos">';
-  h += "<li>No GitHub do projeto: aba <strong>Actions</strong>, <strong>Gerar APK do celular gateway</strong>, <strong>Run workflow</strong>. Leva de 15 a 40 minutos na primeira vez.</li>";
-  h += "<li>Quando terminar, abra a execução e baixe o artefato <strong>voice-sip-agent-apk</strong> (um .zip). Extraia o .apk.</li>";
-  h += "<li>Passe o .apk para o celular (cabo, Google Drive, e-mail para você mesmo) e abra para instalar. O Android pede para permitir apps de fontes desconhecidas.</li>";
-  h += "<li>Depois volte aqui e abra a aba <strong>2. Configurar</strong>.</li></ol>";
+  var passos = '<ol class="ch-cel-passos">';
+  passos += "<li>No GitHub do projeto: aba <strong>Actions</strong>, <strong>Gerar APK do celular gateway</strong>, <strong>Run workflow</strong>. Leva de 15 a 40 minutos na primeira vez.</li>";
+  passos += "<li>Quando terminar, o APK fica na release <strong>apk-latest</strong> (aba <strong>Releases</strong>, arquivo <strong>central-gateway.apk</strong>) e também no artefato <strong>voice-sip-agent-apk</strong> da execução (um .zip: extraia o .apk).</li>";
+  passos += "<li>Passe o .apk para o celular (cabo, Google Drive, e-mail para você mesmo) e abra para instalar. O Android pede para permitir apps de fontes desconhecidas.</li>";
+  passos += "<li>Depois volte aqui e abra a aba <strong>2. Configurar</strong>.</li></ol>";
+  var h = "";
   if (url) {
+    h += "<p><strong>O APK mais novo está sempre neste link.</strong> Aponte a câmera do celular para o QR, baixe e instale. Quando você gerar um APK novo no GitHub, o link continua o mesmo e já entrega o novo.</p>";
     h +=
       '<div class="ch-qr-caixa">' + htmlQr(url) + '<p class="ch-cel-url">' + esc(url) + "</p>" +
       '<div class="ch-cel-botoes"><button class="btn btn-suave" data-acao="copiar-texto" data-texto="' + esc(url) + '" data-aviso="Link copiado">Copiar link</button></div></div>';
+    h += '<p class="ch-dica"><strong>Sem câmera ou sem o link?</strong> Faça pelos passos abaixo.</p>' + passos;
   } else {
-    h += '<p class="ch-dica">Quando você tiver um link direto do APK (Google Drive, release do GitHub), coloque na variável APK_URL da Vercel e um QR para baixar aparece aqui.</p>';
+    h += passos;
+    h += '<p class="ch-dica">Quando o workflow terminar, o QR para baixar o APK aparece aqui sozinho (feche e abra esta janela). Isso só funciona com repositório <strong>público</strong>. Se o seu for privado, o link da release pede login no GitHub: passe o .apk por cabo ou Drive, ou coloque um link direto na variável APK_URL da Vercel.</p>';
   }
+  h += '<p class="ch-dica"><strong>Atualizando o app?</strong> Se o Android recusar instalar por cima do app antigo ("conflito de assinatura"), desinstale o antigo, instale o novo e escaneie o QR da aba 2 de novo. Para as próximas atualizações entrarem por cima, veja "Chave de assinatura fixa" no MANUAL.md.</p>';
   return h;
 }
 

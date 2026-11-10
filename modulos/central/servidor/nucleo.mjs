@@ -227,6 +227,49 @@ export function buscarEstado() {
   });
 }
 
+/* ===== Link do APK (modo online) ===== */
+
+// O workflow gerar-apk publica o APK numa release fixa (tag apk-latest, arquivo central-gateway.apk). O link nunca
+// muda: cada execucao do workflow troca o arquivo que esta atras dele. Com APK_URL o usuario aponta outro lugar.
+export const APK_RELEASE_TAG = "apk-latest";
+export const APK_RELEASE_ARQUIVO = "central-gateway.apk";
+
+/** "dono/repo" do repositorio que a Vercel clonou (variaveis de sistema dela); "" se nao der para saber. */
+export function repositorioGit(ambiente = process.env) {
+  const dono = ambiente.VERCEL_GIT_REPO_OWNER;
+  const nome = ambiente.VERCEL_GIT_REPO_SLUG;
+  if (dono && nome && /^[\w.-]+$/.test(dono) && /^[\w.-]+$/.test(nome)) return dono + "/" + nome;
+  return "";
+}
+
+export function urlApkRelease(repo) {
+  return "https://github.com/" + repo + "/releases/download/" + APK_RELEASE_TAG + "/" + APK_RELEASE_ARQUIVO;
+}
+
+let apkAuto = { em: 0, ttl: 0, url: "" };
+
+/**
+ * O link do APK que a tela mostra: o APK_URL, se existir; senao a release fixa do repositorio, mas so quando ela
+ * ja existe (confere no GitHub; repositorio privado ou sem workflow rodado = sem link, a tela explica).
+ * Lembra o resultado por 5 minutos (20 segundos quando ainda nao existe, para o QR aparecer logo depois do workflow).
+ */
+export async function descobrirApkOnline(agora = Date.now(), buscar = globalThis.fetch) {
+  if (cfg.apkUrl) return cfg.apkUrl;
+  const repo = repositorioGit();
+  if (!repo) return "";
+  if (agora - apkAuto.em < apkAuto.ttl) return apkAuto.url;
+  const url = urlApkRelease(repo);
+  let existe = false;
+  try {
+    const r = await buscar(url, { method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(4000) });
+    existe = r.status === 200 || (r.status >= 300 && r.status < 400);
+  } catch {
+    existe = false;
+  }
+  apkAuto = { em: agora, ttl: existe ? 5 * 60 * 1000 : 20 * 1000, url: existe ? url : "" };
+  return apkAuto.url;
+}
+
 /* ===== Config entregue ao navegador ===== */
 
 export function montarConfig() {

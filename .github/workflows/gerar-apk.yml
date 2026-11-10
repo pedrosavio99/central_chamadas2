@@ -1,11 +1,20 @@
 # Gerar APK do celular gateway
 #
 # Compila o app Voice SIP Agent (https://github.com/sparkcyf/android-voice-sip-agent) e entrega o APK
-# como artefato. O repositorio do app NAO publica APK pronto, entao a gente compila aqui.
+# como artefato e numa release fixa. O repositorio do app NAO publica APK pronto, entao a gente compila aqui.
 #
 # Como usar: aba Actions > "Gerar APK do celular gateway" > Run workflow. Leva de 15 a 40 minutos
-# (compila OpenSSL, Opus e PJSIP para Android do zero). Quando acabar, o APK fica no fim da pagina da
-# execucao, em "Artifacts". Ele vem num .zip: extraia e instale o .apk no celular.
+# (compila OpenSSL, Opus e PJSIP para Android do zero). Quando acabar, o APK fica:
+#   - na release "apk-latest" (aba Releases, arquivo central-gateway.apk). O link
+#     https://github.com/<dono>/<repo>/releases/download/apk-latest/central-gateway.apk NUNCA muda: cada execucao troca o
+#     arquivo que esta atras dele. A Central na Vercel usa esse link sozinha para mostrar o QR de download.
+#     (Repositorio privado: o link pede login no GitHub; o celular nao baixa sozinho.)
+#   - no fim da pagina da execucao, em "Artifacts" (um .zip: extraia e instale o .apk no celular).
+#
+# Assinatura: a build debug e assinada com uma chave que o runner cria do zero a cada execucao, entao o Android
+# recusa instalar um APK novo POR CIMA do antigo. Para as atualizacoes entrarem por cima, crie o segredo opcional
+# ANDROID_DEBUG_KEYSTORE_B64 (passo a passo no MANUAL.md, "Chave de assinatura fixa"). Sem ele tudo funciona,
+# mas a cada APK novo e preciso desinstalar o antigo e escanear o QR da Central de novo.
 #
 # Patches (pasta apk/ deste repositorio), aplicados nesta ordem depois de baixar o app:
 #   1. qr-scan.patch    acrescenta o botao "Scan QR code": e com ele que a Central configura o celular
@@ -47,6 +56,9 @@ jobs:
   apk:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # Escrever so e preciso para publicar a release. O resto do workflow so le (permissions de cima).
+    permissions:
+      contents: write
     env:
       # Versao exigida pelo build-pjsua2.sh do app (esta escrita dentro do script).
       NDK_VERSAO: "28.2.13676358"
@@ -131,6 +143,25 @@ jobs:
           test -f sip-pjsua2/src/generated/jniLibs/arm64-v8a/libpjsua2.so || { echo "libpjsua2.so nao foi gerada"; find sip-pjsua2/src -maxdepth 4 | head -50; exit 1; }
           ls -l sip-pjsua2/src/generated/jniLibs/arm64-v8a/
 
+      - name: Usar a chave de assinatura fixa (opcional)
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -n "${KEYSTORE_B64:-}" ]; then
+            mkdir -p "$HOME/.android"
+            printf '%s' "$KEYSTORE_B64" | base64 -d > "$HOME/.android/debug.keystore"
+            test -s "$HOME/.android/debug.keystore" || { echo "O segredo ANDROID_DEBUG_KEYSTORE_B64 esta vazio ou nao e base64 valido."; exit 1; }
+            echo "Chave de assinatura fixa restaurada: o APK novo instala por cima do antigo."
+          else
+            echo "Sem o segredo ANDROID_DEBUG_KEYSTORE_B64: o runner cria uma chave nova. O APK novo NAO instala por cima do antigo (desinstale o antigo antes)."
+            {
+              echo "### Assinatura"
+              echo
+              echo "Sem o segredo opcional \`ANDROID_DEBUG_KEYSTORE_B64\`, este APK foi assinado com uma chave nova. Se o Android recusar instalar por cima do app antigo, desinstale o antigo e escaneie o QR da Central de novo. Para atualizar por cima, veja \"Chave de assinatura fixa\" no MANUAL.md."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Compilar o APK
         working-directory: app
         run: ./gradlew --no-daemon :app:assembleDebug
@@ -157,7 +188,7 @@ jobs:
             echo
             echo "SHA-256: \`$(cut -d' ' -f1 "../saida/${nome}.sha256")\`"
             echo
-            echo "Baixe em **Artifacts** (fim desta pagina), extraia o .zip e instale o .apk no celular."
+            echo "Baixe na release **apk-latest** (aba Releases, arquivo \`central-gateway.apk\`) ou em **Artifacts** (fim desta pagina; extraia o .zip) e instale o .apk no celular."
             echo "E uma build **debug** (assinada com a chave de depuracao): serve para uso proprio, nao para distribuir."
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -169,3 +200,47 @@ jobs:
           path: saida/*
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publicar na release fixa (o link nao muda)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REPO_PRIVADO: ${{ github.event.repository.private }}
+        run: |
+          set -euo pipefail
+          cd saida
+          apk="$(ls ./*-gw-debug.apk | head -n 1)"
+          cp "$apk" central-gateway.apk
+          sha256sum central-gateway.apk | tee central-gateway.apk.sha256
+          {
+            echo "APK do celular gateway, ultima compilacao."
+            echo
+            echo "- Gerado em: $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo "- Commit do app: $(git -C ../app rev-parse HEAD)"
+            echo "- Commit deste repositorio: ${GITHUB_SHA}"
+            echo "- SHA-256: $(cut -d' ' -f1 central-gateway.apk.sha256)"
+            echo
+            echo "Esta release e atualizada a cada execucao do workflow. O link do arquivo nao muda."
+            echo "Build debug, para uso proprio."
+          } > ../notas-release.md
+          if gh release view apk-latest >/dev/null 2>&1; then
+            gh release upload apk-latest central-gateway.apk central-gateway.apk.sha256 --clobber
+            gh release edit apk-latest --title "APK do celular gateway (mais recente)" --notes-file ../notas-release.md
+          else
+            gh release create apk-latest central-gateway.apk central-gateway.apk.sha256 \
+              --title "APK do celular gateway (mais recente)" --notes-file ../notas-release.md --target "${GITHUB_SHA}"
+          fi
+          link="https://github.com/${GITHUB_REPOSITORY}/releases/download/apk-latest/central-gateway.apk"
+          {
+            echo
+            echo "## Link fixo do APK"
+            echo
+            echo "${link}"
+            if [ "${REPO_PRIVADO:-false}" = "true" ]; then
+              echo
+              echo "**Atencao:** o repositorio e privado, entao este link pede login no GitHub e o celular nao baixa sozinho. Passe o .apk por cabo ou Drive."
+            else
+              echo
+              echo "A Central na Vercel mostra o QR deste link sozinha (feche e abra a janela Conectar celular)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

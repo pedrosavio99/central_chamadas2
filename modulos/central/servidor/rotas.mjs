@@ -10,6 +10,7 @@ import {
   exigirToken,
   buscarEstado,
   montarConfig,
+  descobrirApkOnline,
   montarCelular,
   montarApk,
   listarChamadas,
@@ -115,7 +116,10 @@ export async function rotear(req, url) {
     verificarOrigem(req);
     // No modo online o config so tem o endereco publico do relay: pode ser lido de qualquer lugar.
     if (!cfg.online) exigirLocal(req);
-    return montarConfig();
+    const config = montarConfig();
+    // Sem APK_URL, tenta o link fixo da release do repositorio (so se ela existir de verdade).
+    if (config.online && !config.online.apk) config.online.apk = await descobrirApkOnline();
+    return config;
   }
 
   // Entrega a senha do celular gateway (para o QR): mesmas travas do /api/config, so o proprio PC.

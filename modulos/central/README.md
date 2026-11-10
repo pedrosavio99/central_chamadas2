@@ -38,7 +38,7 @@ O mesmo módulo também serve a Central online: em vez de falar com um Asterisk,
 | `publico/online-ui.js` | Entrada com o código, guia passo a passo na tela, aba **Registro**, painel **Conectar celular** do modo online (QR com `sip.stack: "online"`) |
 | `servidor/nucleo.mjs` | `decidirOnline()`; no modo online `/api/config` entrega só `{online:{relay, apk}}`, sem segredo |
 
-Variáveis do modo online: `RELAY_URL` (endereço do relay), `APK_URL` (opcional, QR de download), `MODO`. A senha do modo
+Variáveis do modo online: `RELAY_URL` (endereço do relay), `APK_URL` (opcional; sem ele a Central usa o link fixo da release `apk-latest` do repositorio, se ela existir e for publica), `MODO`. A senha do modo
 online (`ACCESS_CODE`) fica **só no relay**; a tela a pede no login e a guarda no navegador. O histórico fica no
 `localStorage` do navegador. Veja o `MANUAL.md`.
 
